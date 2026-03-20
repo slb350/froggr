@@ -56,7 +56,7 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 
 ## Development
 
-See [CLAUDE.md](./CLAUDE.md) for development guidelines and [docs/](./docs/) for architecture and design.
+See [docs/](./docs/) for architecture and design.
 
 ## License
 
