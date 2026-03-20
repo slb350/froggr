@@ -133,6 +133,7 @@ internal/ghub/       → GitHub App auth, webhook parsing, API client
 internal/debounce/   → timer-based push debounce (30s window)
 internal/review/     → AI review engine (context → prompt → parse → format)
 internal/server/     → HTTP server, webhook routing, event handler
+internal/testutil/   → shared test helpers (webhook signing, error fixtures)
 ```
 
 ## Review Budgeting
