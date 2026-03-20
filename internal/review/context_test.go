@@ -209,6 +209,26 @@ func TestBuildContext_UsesLatestPriorReviews(t *testing.T) {
 	assert.Equal(t, "froggr review 7", rc.PriorReviews[len(rc.PriorReviews)-1])
 }
 
+func TestBuildContext_AllDiffsFilteredByIgnorePaths(t *testing.T) {
+	gh := &mockGitHub{
+		issue: ghub.IssueInfo{Number: 42, Title: "Vendor update", State: "open"},
+		diffs: []ghub.FileDiff{
+			{Path: "vendor/lib/foo.go", Status: "modified", Patch: "+update"},
+			{Path: "go.lock", Status: "modified", Patch: "+hash"},
+		},
+	}
+
+	push := ghub.PushContext{
+		Owner: "owner", Repo: "repo", Branch: "42-vendor",
+		HeadSHA: "abc123", DefaultBranch: "main",
+	}
+
+	rc, err := BuildContext(context.Background(), gh, push, 42, config.Defaults())
+	require.NoError(t, err)
+	assert.Empty(t, rc.Diffs)
+	assert.Empty(t, rc.Files)
+}
+
 func TestBuildContext_IssueClosed(t *testing.T) {
 	gh := &mockGitHub{
 		issue: ghub.IssueInfo{Number: 42, Title: "Done", State: "closed"},

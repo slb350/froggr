@@ -37,20 +37,9 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 		return ctx.Err()
 	}
 
-	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
-		Model: cfg.Model,
-		Messages: []openrouter.Message{
-			{Role: "system", Content: SystemPrompt()},
-			{Role: "user", Content: UserPrompt(rc)},
-		},
-	})
+	result, err := e.runAIReview(ctx, rc, cfg.Model)
 	if err != nil {
-		return fmt.Errorf("AI review: %w", err)
-	}
-
-	result, err := ParseResponse(aiResponse)
-	if err != nil {
-		return fmt.Errorf("parsing AI response: %w", err)
+		return err
 	}
 
 	comment := FormatComment(result, push)
@@ -59,13 +48,44 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 	}
 
 	if result.IsClean && cfg.AutoDraftPR {
-		title := fmt.Sprintf("%s (froggr reviewed)", rc.Issue.Title)
-		body := fmt.Sprintf("Closes #%d\n\nAuto-created by froggr after a clean review.", issueNum)
-		if _, _, err := gh.CreateDraftPR(ctx, push.Owner, push.Repo, title, body, push.Branch, push.DefaultBranch); err != nil {
-			return fmt.Errorf("creating draft PR: %w", err)
-		}
+		return maybeCreateDraftPR(ctx, gh, push, rc.Issue.Title, issueNum)
 	}
 
+	return nil
+}
+
+// runAIReview builds the prompt, calls the AI, and parses the response.
+func (e *Engine) runAIReview(ctx context.Context, rc Context, model string) (Result, error) {
+	userPrompt, err := UserPrompt(rc)
+	if err != nil {
+		return Result{}, fmt.Errorf("building prompt: %w", err)
+	}
+
+	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
+		Model: model,
+		Messages: []openrouter.Message{
+			{Role: "system", Content: SystemPrompt()},
+			{Role: "user", Content: userPrompt},
+		},
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("AI review: %w", err)
+	}
+
+	result, err := ParseResponse(aiResponse)
+	if err != nil {
+		return Result{}, fmt.Errorf("parsing AI response: %w", err)
+	}
+
+	return result, nil
+}
+
+func maybeCreateDraftPR(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueTitle string, issueNum int) error {
+	title := fmt.Sprintf("%s (froggr reviewed)", issueTitle)
+	body := fmt.Sprintf("Closes #%d\n\nAuto-created by froggr after a clean review.", issueNum)
+	if _, _, err := gh.CreateDraftPR(ctx, push.Owner, push.Repo, title, body, push.Branch, push.DefaultBranch); err != nil {
+		return fmt.Errorf("creating draft PR: %w", err)
+	}
 	return nil
 }
 

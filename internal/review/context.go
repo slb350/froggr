@@ -82,8 +82,10 @@ func filterDiffs(diffs []ghub.FileDiff, cfg config.Config) []ghub.FileDiff {
 	return result
 }
 
-// limitDiffs keeps the highest-priority diff context bounded. We keep the
-// earliest compare results in order and surface the omission to the model later.
+// limitDiffs keeps diff context bounded by keeping the first N files from
+// GitHub's compare response and dropping the rest. The omission count is
+// surfaced to the model in the prompt. (Prior reviews use a different
+// strategy: they keep the most recent N instead — see fetchPriorReviews.)
 func limitDiffs(diffs []ghub.FileDiff, limit int) ([]ghub.FileDiff, int) {
 	if len(diffs) <= limit {
 		return diffs, 0

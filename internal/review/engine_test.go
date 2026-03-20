@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/slb350/froggr/internal/config"
@@ -190,6 +191,32 @@ func TestEngine_Review_ComparisonTooLarge_PostsSkipComment(t *testing.T) {
 	assert.Contains(t, gh.commentPosted, "up to 300 changed files")
 	assert.Equal(t, 0, ai.calls)
 	assert.False(t, gh.draftPRCreated)
+}
+
+func TestEngine_Review_ComparisonTooLarge_SkipCommentFails(t *testing.T) {
+	gh := baseGitHub()
+	gh.diffErr = ghub.ErrComparisonTooLarge
+	gh.commentPostErr = errors.New("rate limited")
+	ai := &mockAI{}
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "posting skipped review comment")
+	assert.Equal(t, 0, ai.calls)
+}
+
+func TestEngine_Review_PromptBudgetExhausted(t *testing.T) {
+	gh := baseGitHub()
+	gh.issue.Title = "x" // very short title
+	gh.issue.Body = strings.Repeat("body ", 30000)
+	ai := &mockAI{response: "[]"}
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	// The issue body is huge but truncated; diffs should still fit.
+	// This test verifies the prompt pipeline handles large bodies gracefully.
+	require.NoError(t, err)
 }
 
 // Ensure mockGitHub satisfies GitHubClient at compile time.

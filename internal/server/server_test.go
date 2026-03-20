@@ -46,7 +46,7 @@ func newTestServer(gh *mockGHClient, eng *mockReviewer) *Server {
 // --- Tests ---
 
 func TestServer_ValidPushWebhook(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -63,7 +63,7 @@ func TestServer_ValidPushWebhook(t *testing.T) {
 }
 
 func TestServer_InvalidSignature(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -77,7 +77,7 @@ func TestServer_InvalidSignature(t *testing.T) {
 }
 
 func TestServer_MalformedPayload(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -91,7 +91,7 @@ func TestServer_MalformedPayload(t *testing.T) {
 }
 
 func TestServer_UnknownEventType(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -106,7 +106,7 @@ func TestServer_UnknownEventType(t *testing.T) {
 }
 
 func TestServer_HealthEndpoint(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()

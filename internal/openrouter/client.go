@@ -52,12 +52,7 @@ type CompletionRequest struct {
 // chatCompletionRequest is the OpenAI-compatible wire format.
 type chatCompletionRequest struct {
 	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
-}
-
-type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Messages []Message `json:"messages"`
 }
 
 // chatCompletionResponse is the OpenAI-compatible response format.
@@ -67,7 +62,7 @@ type chatCompletionResponse struct {
 }
 
 type choice struct {
-	Message message `json:"message"`
+	Message Message `json:"message"`
 }
 
 type apiError struct {
@@ -117,15 +112,7 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, e
 
 // doRequest builds, sends, and reads the HTTP request/response.
 func (c *Client) doRequest(ctx context.Context, req CompletionRequest) ([]byte, error) {
-	wireMessages := make([]message, len(req.Messages))
-	for i, m := range req.Messages {
-		wireMessages[i] = message(m)
-	}
-
-	reqJSON, err := json.Marshal(chatCompletionRequest{
-		Model:    req.Model,
-		Messages: wireMessages,
-	})
+	reqJSON, err := json.Marshal(chatCompletionRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}

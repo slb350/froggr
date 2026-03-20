@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -111,22 +112,26 @@ func TestParse_UnrecognizedTextFailsClosed(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidAIResponse)
 }
 
-func TestParse_CaseInsensitiveSeverity(t *testing.T) {
-	response := `[{"severity":"bug","file":"src/auth.go","line":1,"description":"case test"}]`
-
-	result, err := ParseResponse(response)
-	require.NoError(t, err)
-	require.Len(t, result.Findings, 1)
-	assert.Equal(t, SeverityBug, result.Findings[0].Severity)
-}
-
-func TestParse_SeverityWithWhitespace(t *testing.T) {
-	response := `[{"severity":" Concern ","file":"src/auth.go","line":1,"description":"ws test"}]`
-
-	result, err := ParseResponse(response)
-	require.NoError(t, err)
-	require.Len(t, result.Findings, 1)
-	assert.Equal(t, SeverityConcern, result.Findings[0].Severity)
+func TestParse_SeverityNormalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		severity string
+		want     Severity
+	}{
+		{"lowercase bug", "bug", SeverityBug},
+		{"lowercase concern", "concern", SeverityConcern},
+		{"mixed case Bug", "Bug", SeverityBug},
+		{"whitespace around Concern", " Concern ", SeverityConcern},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := fmt.Sprintf(`[{"severity":%q,"file":"src/auth.go","line":1,"description":"test"}]`, tt.severity)
+			result, err := ParseResponse(response)
+			require.NoError(t, err)
+			require.Len(t, result.Findings, 1)
+			assert.Equal(t, tt.want, result.Findings[0].Severity)
+		})
+	}
 }
 
 func TestParse_InvalidFencedJSONFailsClosed(t *testing.T) {

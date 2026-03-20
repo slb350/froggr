@@ -11,9 +11,13 @@ import (
 
 const githubCompareFileLimit = 300
 
-// ErrComparisonTooLarge means GitHub's compare API may have truncated the file
-// list, so froggr cannot claim a complete review.
-var ErrComparisonTooLarge = errors.New("comparison may exceed GitHub's changed-file limit")
+// ErrComparisonTooLarge indicates the comparison has reached GitHub's 300-file
+// limit, meaning additional changed files may exist that froggr cannot see.
+// froggr fails closed rather than silently reviewing a partial diff.
+var ErrComparisonTooLarge = errors.New("comparison reached GitHub's 300-file limit")
+
+// errPRNotFound is returned by findExistingPullRequest when no matching PR exists.
+var errPRNotFound = errors.New("no matching pull request found")
 
 // Client wraps a go-github client and provides the GitHub API operations
 // needed by froggr's review engine.
@@ -89,6 +93,9 @@ func (c *Client) GetBranchDiff(ctx context.Context, owner, repo, base, head stri
 
 	diffs := make([]FileDiff, 0, len(comparison.Files))
 	for _, f := range comparison.Files {
+		if f == nil {
+			continue
+		}
 		diffs = append(diffs, FileDiff{
 			Path:   f.GetFilename(),
 			Status: f.GetStatus(),
@@ -142,16 +149,16 @@ func (c *Client) CreateDraftPR(ctx context.Context, owner, repo, title, body, he
 		if isAlreadyExistsPRError(err) {
 			// Treat duplicate draft/open PR creation as an idempotent success path.
 			existing, lookupErr := c.findExistingPullRequest(ctx, owner, repo, head, base)
+			if errors.Is(lookupErr, errPRNotFound) {
+				// GitHub reported "already exists" but the lookup returned nothing.
+				// This can indicate a race (PR closed between error and lookup),
+				// permissions on the list endpoint, or API inconsistency.
+				return 0, "", fmt.Errorf("creating draft PR: %w (existing PR lookup returned no results)", err)
+			}
 			if lookupErr != nil {
 				return 0, "", fmt.Errorf("creating draft PR: %w; looking up existing PR: %v", err, lookupErr)
 			}
-			if existing != nil {
-				return existing.GetNumber(), existing.GetHTMLURL(), nil
-			}
-			// GitHub reported "already exists" but the lookup returned nothing.
-			// This can indicate a race (PR closed between error and lookup),
-			// permissions on the list endpoint, or API inconsistency.
-			return 0, "", fmt.Errorf("creating draft PR: %w (existing PR lookup returned no results)", err)
+			return existing.GetNumber(), existing.GetHTMLURL(), nil
 		}
 		return 0, "", fmt.Errorf("creating draft PR: %w", err)
 	}
@@ -193,7 +200,7 @@ func (c *Client) findExistingPullRequest(ctx context.Context, owner, repo, head,
 		return nil, fmt.Errorf("listing pull requests for %s:%s -> %s: %w", owner, head, base, err)
 	}
 	if len(prs) == 0 {
-		return nil, nil
+		return nil, errPRNotFound
 	}
 	return prs[0], nil
 }

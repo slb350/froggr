@@ -268,85 +268,83 @@ func TestCreateDraftPR_AlreadyExists_WithoutExistingPRStillErrors(t *testing.T) 
 
 // --- IsNotFound tests ---
 
-func TestIsNotFound_Actual404(t *testing.T) {
-	err := &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}
-	assert.True(t, IsNotFound(err))
-}
-
-func TestIsNotFound_403(t *testing.T) {
-	err := &github.ErrorResponse{Response: &http.Response{StatusCode: 403}}
-	assert.False(t, IsNotFound(err))
-}
-
-func TestIsNotFound_NilResponse(t *testing.T) {
-	err := &github.ErrorResponse{Response: nil}
-	assert.False(t, IsNotFound(err))
-}
-
-func TestIsNotFound_Wrapped404(t *testing.T) {
-	inner := &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}
-	err := fmt.Errorf("outer: %w", inner)
-	assert.True(t, IsNotFound(err))
-}
-
-func TestIsNotFound_PlainError(t *testing.T) {
-	assert.False(t, IsNotFound(errors.New("not found")))
-}
-
-func TestIsNotFound_Nil(t *testing.T) {
-	assert.False(t, IsNotFound(nil))
+func TestIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"actual 404", &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}, true},
+		{"403", &github.ErrorResponse{Response: &http.Response{StatusCode: 403}}, false},
+		{"nil response", &github.ErrorResponse{Response: nil}, false},
+		{"wrapped 404", fmt.Errorf("outer: %w", &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}), true},
+		{"plain error", errors.New("not found"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsNotFound(tt.err))
+		})
+	}
 }
 
 // --- isAlreadyExistsPRError tests ---
 
-func TestIsAlreadyExistsPRError_ByCode(t *testing.T) {
-	err := &github.ErrorResponse{
-		Response: &http.Response{StatusCode: 422},
-		Errors:   []github.Error{{Code: "already_exists"}},
+func TestIsAlreadyExistsPRError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"by code",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Errors:   []github.Error{{Code: "already_exists"}},
+			},
+			true,
+		},
+		{
+			"by detail message",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Errors:   []github.Error{{Message: "A pull request Already Exists for this branch"}},
+			},
+			true,
+		},
+		{
+			"by top-level message",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Message:  "A pull request already exists",
+			},
+			true,
+		},
+		{
+			"non-422",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 500},
+				Errors:   []github.Error{{Code: "already_exists"}},
+			},
+			false,
+		},
+		{"nil response", &github.ErrorResponse{Response: nil}, false},
+		{"plain error", errors.New("something"), false},
+		{
+			"unrelated validation error",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Message:  "Validation Failed",
+				Errors:   []github.Error{{Code: "invalid", Field: "title"}},
+			},
+			false,
+		},
 	}
-	assert.True(t, isAlreadyExistsPRError(err))
-}
-
-func TestIsAlreadyExistsPRError_ByDetailMessage(t *testing.T) {
-	err := &github.ErrorResponse{
-		Response: &http.Response{StatusCode: 422},
-		Errors:   []github.Error{{Message: "A pull request Already Exists for this branch"}},
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isAlreadyExistsPRError(tt.err))
+		})
 	}
-	assert.True(t, isAlreadyExistsPRError(err))
-}
-
-func TestIsAlreadyExistsPRError_ByTopLevelMessage(t *testing.T) {
-	err := &github.ErrorResponse{
-		Response: &http.Response{StatusCode: 422},
-		Message:  "A pull request already exists",
-	}
-	assert.True(t, isAlreadyExistsPRError(err))
-}
-
-func TestIsAlreadyExistsPRError_Non422(t *testing.T) {
-	err := &github.ErrorResponse{
-		Response: &http.Response{StatusCode: 500},
-		Errors:   []github.Error{{Code: "already_exists"}},
-	}
-	assert.False(t, isAlreadyExistsPRError(err))
-}
-
-func TestIsAlreadyExistsPRError_NilResponse(t *testing.T) {
-	err := &github.ErrorResponse{Response: nil}
-	assert.False(t, isAlreadyExistsPRError(err))
-}
-
-func TestIsAlreadyExistsPRError_PlainError(t *testing.T) {
-	assert.False(t, isAlreadyExistsPRError(errors.New("something")))
-}
-
-func TestIsAlreadyExistsPRError_UnrelatedValidationError(t *testing.T) {
-	err := &github.ErrorResponse{
-		Response: &http.Response{StatusCode: 422},
-		Message:  "Validation Failed",
-		Errors:   []github.Error{{Code: "invalid", Field: "title"}},
-	}
-	assert.False(t, isAlreadyExistsPRError(err))
 }
 
 // --- Boundary: 299 files should succeed ---

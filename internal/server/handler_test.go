@@ -126,14 +126,10 @@ func noReview(t *testing.T, eng *mockReviewer, wait time.Duration) {
 	assert.Empty(t, eng.getCalls(), "expected no review calls")
 }
 
-func notFoundError() error {
-	return testutil.NotFoundError()
-}
-
 // --- Tests ---
 
 func TestHandlePush_MatchingBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -147,7 +143,7 @@ func TestHandlePush_MatchingBranch(t *testing.T) {
 }
 
 func TestHandlePush_NonMatchingBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -160,7 +156,7 @@ func TestHandlePush_NonMatchingBranch(t *testing.T) {
 }
 
 func TestHandlePush_DefaultBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -173,7 +169,7 @@ func TestHandlePush_DefaultBranch(t *testing.T) {
 }
 
 func TestHandleIssuesClosed(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -207,7 +203,7 @@ func TestHandler_FetchesRepoConfig(t *testing.T) {
 }
 
 func TestHandler_FallbackToDefaults(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -233,6 +229,25 @@ func TestHandler_ConfigFetchFailure_SkipsReview(t *testing.T) {
 	noReview(t, eng, testDebounceWindow*3)
 }
 
+func TestHandler_InvalidConfigYAML_FallsBackToDefaults(t *testing.T) {
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "not: [valid: yaml",
+		},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	call := waitForReview(t, eng, 500*time.Millisecond)
+	defaults := config.Defaults()
+	assert.Equal(t, defaults.Model, call.cfg.Model)
+	assert.True(t, call.cfg.AutoDraftPR)
+}
+
 type blockingReviewer struct {
 	started  chan struct{}
 	canceled chan error
@@ -247,7 +262,7 @@ func (b *blockingReviewer) Review(ctx context.Context, _ review.GitHubClient, _ 
 }
 
 func TestHandler_StopCancelsInFlightReview(t *testing.T) {
-	gh := &mockGHClient{fileErr: notFoundError()}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &blockingReviewer{
 		started:  make(chan struct{}),
 		canceled: make(chan error, 1),

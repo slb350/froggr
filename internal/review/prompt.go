@@ -56,29 +56,39 @@ Example response:
 }
 
 // UserPrompt builds the user prompt from the review context.
-func UserPrompt(rc Context) string {
+// It returns an error if the prompt budget is too small to include
+// the issue title or any code context (diffs or files).
+func UserPrompt(rc Context) (string, error) {
 	budget := newPromptBudget(maxPromptChars)
 
 	if !budget.Write(fmt.Sprintf("## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title)) {
-		return ""
+		return "", fmt.Errorf("issue title exceeds prompt budget (%d chars)", maxPromptChars)
 	}
 	if rc.Issue.Body != "" {
 		_ = budget.Write(truncateForPrompt(rc.Issue.Body, maxIssueBodyChars) + "\n\n")
 	}
 
-	writeDiffSection(budget, rc)
-	writeFileSection(budget, rc)
+	diffsWritten := writeDiffSection(budget, rc)
+	filesWritten := writeFileSection(budget, rc)
 	writePriorReviewSection(budget, rc)
 
-	return budget.String()
+	hasCodeContext := len(rc.Diffs) > 0 || len(rc.Files) > 0
+	if hasCodeContext && !diffsWritten && !filesWritten {
+		return "", fmt.Errorf("prompt budget exhausted before any code context could be included")
+	}
+
+	return budget.String(), nil
 }
 
-func writeDiffSection(budget *promptBudget, rc Context) {
+// writeDiffSection writes diff context into the prompt budget.
+// Returns true if at least one diff was written.
+func writeDiffSection(budget *promptBudget, rc Context) bool {
 	if len(rc.Diffs) == 0 {
-		return
+		return false
 	}
 
 	_ = budget.Write("## Diff\n\n")
+	written := 0
 	omitted := rc.OmittedDiffs
 	for i, d := range rc.Diffs {
 		patch := d.Patch
@@ -96,16 +106,21 @@ func writeDiffSection(budget *promptBudget, rc Context) {
 			omitted += len(rc.Diffs) - i
 			break
 		}
+		written++
 	}
 	writeBudgetNote(budget, omitted, "diff file")
+	return written > 0
 }
 
-func writeFileSection(budget *promptBudget, rc Context) {
+// writeFileSection writes file contents into the prompt budget.
+// Returns true if at least one file was written.
+func writeFileSection(budget *promptBudget, rc Context) bool {
 	if len(rc.Files) == 0 {
-		return
+		return false
 	}
 
 	_ = budget.Write("## Full File Contents\n\n")
+	written := 0
 	omitted := 0
 	for i, f := range rc.Files {
 		chunk := fmt.Sprintf(
@@ -114,11 +129,13 @@ func writeFileSection(budget *promptBudget, rc Context) {
 			truncateForPrompt(f.Content, maxFileContentChars),
 		)
 		if !budget.Write(chunk) {
-			omitted += len(rc.Files) - i
+			omitted = len(rc.Files) - i
 			break
 		}
+		written++
 	}
 	writeBudgetNote(budget, omitted, "full file content block")
+	return written > 0
 }
 
 func writePriorReviewSection(budget *promptBudget, rc Context) {
