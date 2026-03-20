@@ -13,6 +13,7 @@ import (
 	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
 	"github.com/slb350/froggr/internal/review"
+	"github.com/slb350/froggr/internal/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -126,7 +127,7 @@ func noReview(t *testing.T, eng *mockReviewer, wait time.Duration) {
 }
 
 func notFoundError() error {
-	return &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}
+	return testutil.NotFoundError()
 }
 
 // --- Tests ---

@@ -80,6 +80,44 @@ func TestUserPrompt_HandlesMissingPriors(t *testing.T) {
 	assert.NotContains(t, prompt, "Prior Review")
 }
 
+func TestUserPrompt_HugeTitleExceedsBudgetReturnsEmpty(t *testing.T) {
+	rc := Context{
+		Issue: ghub.IssueInfo{
+			Number: 1,
+			Title:  strings.Repeat("x", maxPromptChars+1),
+		},
+	}
+	prompt := UserPrompt(rc)
+	assert.Empty(t, prompt)
+}
+
+func TestUserPrompt_NormalTitleFits(t *testing.T) {
+	rc := Context{
+		Issue: ghub.IssueInfo{
+			Number: 1,
+			Title:  "Short title",
+		},
+	}
+	prompt := UserPrompt(rc)
+	assert.Contains(t, prompt, "Short title")
+}
+
+func TestTruncateForPrompt_VerySmallLimit(t *testing.T) {
+	result := truncateForPrompt("some content that is too long", 10)
+	assert.Len(t, result, 10)
+}
+
+func TestTruncateForPrompt_ExactLimit(t *testing.T) {
+	content := "exact"
+	result := truncateForPrompt(content, len(content))
+	assert.Equal(t, content, result)
+}
+
+func TestTruncateForPrompt_LimitSmallerThanNote(t *testing.T) {
+	result := truncateForPrompt("long content here", 5)
+	assert.Len(t, result, 5)
+}
+
 func TestUserPrompt_AppliesBudgetAndNotesOmissions(t *testing.T) {
 	rc := Context{
 		Issue: ghub.IssueInfo{

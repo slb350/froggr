@@ -8,10 +8,16 @@ import (
 const (
 	// Prompt budgeting is deliberate: bounded input keeps review latency and
 	// cost predictable, and avoids silent provider-side truncation on big pushes.
-	maxPromptChars       = 120000
-	maxIssueBodyChars    = 4000
-	maxDiffPatchChars    = 8000
-	maxFileContentChars  = 12000
+
+	// maxPromptChars caps total prompt size (~30k tokens for most tokenizers).
+	maxPromptChars = 120000
+	// maxIssueBodyChars limits the issue description included for context.
+	maxIssueBodyChars = 4000
+	// maxDiffPatchChars limits each individual file diff patch.
+	maxDiffPatchChars = 8000
+	// maxFileContentChars limits each full file body fetched at HEAD.
+	maxFileContentChars = 12000
+	// maxPriorReviewChars limits each prior froggr review comment.
 	maxPriorReviewChars  = 4000
 	promptTruncationNote = "\n... [truncated to stay within froggr review budget]\n"
 )
@@ -53,7 +59,9 @@ Example response:
 func UserPrompt(rc Context) string {
 	budget := newPromptBudget(maxPromptChars)
 
-	_ = budget.Write(fmt.Sprintf("## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title))
+	if !budget.Write(fmt.Sprintf("## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title)) {
+		return ""
+	}
 	if rc.Issue.Body != "" {
 		_ = budget.Write(truncateForPrompt(rc.Issue.Body, maxIssueBodyChars) + "\n\n")
 	}

@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -53,12 +54,13 @@ type Handler struct {
 
 	mu            sync.Mutex
 	issueBranches map[issueRef]debounce.Key
+	stopOnce      sync.Once
 }
 
 // NewHandler creates a Handler with the given dependencies.
 // The debounce buffer is created internally with the provided window duration.
 func NewHandler(clients ClientFactory, engine ReviewRunner, debounceWindow time.Duration, logger *slog.Logger) *Handler {
-	reviewCtx, cancel := context.WithCancel(context.Background())
+	reviewCtx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Handler and called via Stop()
 	h := &Handler{
 		clients:       clients,
 		engine:        engine,
@@ -124,15 +126,21 @@ func (h *Handler) HandleIssuesClosed(owner, repo string, issueNum int) {
 }
 
 // Stop cancels all pending reviews and any in-flight review work started from
-// this handler. No further callbacks will fire.
+// this handler. No further callbacks will fire. Safe to call multiple times.
 func (h *Handler) Stop() {
-	h.buf.Stop()
-	h.cancel()
+	h.stopOnce.Do(func() {
+		h.buf.Stop()
+		h.cancel()
+	})
 }
 
 // onDebounce is called when the debounce window expires for a push.
 func (h *Handler) onDebounce(_ debounce.Key, data any) {
-	pd := data.(pushData)
+	pd, ok := data.(pushData)
+	if !ok {
+		h.logger.Error("unexpected data type in debounce callback", "type", fmt.Sprintf("%T", data))
+		return
+	}
 
 	h.mu.Lock()
 	delete(h.issueBranches, issueRef{owner: pd.push.Owner, repo: pd.push.Repo, issue: pd.issueNum})

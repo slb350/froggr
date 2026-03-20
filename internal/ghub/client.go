@@ -71,8 +71,9 @@ func (c *Client) GetIssueComments(ctx context.Context, owner, repo string, numbe
 
 // GetBranchDiff returns the file diffs between base and head refs.
 func (c *Client) GetBranchDiff(ctx context.Context, owner, repo, base, head string) ([]FileDiff, error) {
-	// Request only the first compare page. GitHub includes the changed-file list
-	// on page 1, so this avoids downloading long commit histories we do not use.
+	// Minimize commit history in the response. GitHub's compare endpoint always
+	// includes the changed-file list (capped at 300) regardless of pagination, so
+	// PerPage only controls how many commits are returned per page.
 	opts := &github.ListOptions{Page: 1, PerPage: 1}
 	comparison, _, err := c.gh.Repositories.CompareCommits(ctx, owner, repo, base, head, opts)
 	if err != nil {
@@ -147,6 +148,10 @@ func (c *Client) CreateDraftPR(ctx context.Context, owner, repo, title, body, he
 			if existing != nil {
 				return existing.GetNumber(), existing.GetHTMLURL(), nil
 			}
+			// GitHub reported "already exists" but the lookup returned nothing.
+			// This can indicate a race (PR closed between error and lookup),
+			// permissions on the list endpoint, or API inconsistency.
+			return 0, "", fmt.Errorf("creating draft PR: %w (existing PR lookup returned no results)", err)
 		}
 		return 0, "", fmt.Errorf("creating draft PR: %w", err)
 	}

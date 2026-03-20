@@ -33,6 +33,10 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 		return fmt.Errorf("building context: %w", err)
 	}
 
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
 		Model: cfg.Model,
 		Messages: []openrouter.Message{

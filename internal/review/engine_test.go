@@ -150,6 +150,33 @@ func TestEngine_Review_ContextCancellation(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestEngine_Review_CommentPostError_Propagates(t *testing.T) {
+	gh := baseGitHub()
+	gh.commentPostErr = errors.New("rate limited")
+	ai := &mockAI{response: "[]"}
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rate limited")
+	assert.Contains(t, err.Error(), "posting review comment")
+}
+
+func TestEngine_Review_DraftPRError_Propagates(t *testing.T) {
+	gh := baseGitHub()
+	gh.draftPRErr = errors.New("forbidden")
+	ai := &mockAI{response: "[]"}
+
+	cfg := config.Defaults()
+	cfg.AutoDraftPR = true
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "forbidden")
+	assert.Contains(t, err.Error(), "creating draft PR")
+}
+
 func TestEngine_Review_ComparisonTooLarge_PostsSkipComment(t *testing.T) {
 	gh := baseGitHub()
 	gh.diffErr = ghub.ErrComparisonTooLarge

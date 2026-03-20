@@ -114,9 +114,12 @@ func parseTextFindings(s string) []Finding {
 		if matches == nil {
 			continue
 		}
-		lineNum, _ := strconv.Atoi(matches[3])
+		lineNum, err := strconv.Atoi(matches[3])
+		if err != nil {
+			continue
+		}
 		findings = append(findings, Finding{
-			Severity:    Severity(matches[1]),
+			Severity:    normalizeSeverity(matches[1]),
 			File:        matches[2],
 			Line:        lineNum,
 			Description: strings.TrimSpace(matches[4]),
@@ -144,7 +147,15 @@ func validateFindingJSON(f findingJSON) error {
 }
 
 func normalizeSeverity(s string) Severity {
-	return Severity(strings.TrimSpace(s))
+	trimmed := strings.TrimSpace(s)
+	switch strings.ToLower(trimmed) {
+	case "bug":
+		return SeverityBug
+	case "concern":
+		return SeverityConcern
+	default:
+		return Severity(trimmed)
+	}
 }
 
 // buildResult creates a Result from a slice of findings.

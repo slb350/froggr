@@ -111,6 +111,24 @@ func TestParse_UnrecognizedTextFailsClosed(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidAIResponse)
 }
 
+func TestParse_CaseInsensitiveSeverity(t *testing.T) {
+	response := `[{"severity":"bug","file":"src/auth.go","line":1,"description":"case test"}]`
+
+	result, err := ParseResponse(response)
+	require.NoError(t, err)
+	require.Len(t, result.Findings, 1)
+	assert.Equal(t, SeverityBug, result.Findings[0].Severity)
+}
+
+func TestParse_SeverityWithWhitespace(t *testing.T) {
+	response := `[{"severity":" Concern ","file":"src/auth.go","line":1,"description":"ws test"}]`
+
+	result, err := ParseResponse(response)
+	require.NoError(t, err)
+	require.Len(t, result.Findings, 1)
+	assert.Equal(t, SeverityConcern, result.Findings[0].Severity)
+}
+
 func TestParse_InvalidFencedJSONFailsClosed(t *testing.T) {
 	response := "```json\n" +
 		`[{"severity":"Bug","file":"","line":0,"description":""}]` +
