@@ -3,6 +3,8 @@ package ghub
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -72,7 +74,10 @@ func TestGetIssue_Closed(t *testing.T) {
 
 func TestGetBranchDiff_Success(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /repos/owner/repo/compare/main...feature", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /repos/owner/repo/compare/main...feature", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "1", r.URL.Query().Get("page"))
+		assert.Equal(t, "1", r.URL.Query().Get("per_page"))
+
 		_ = json.NewEncoder(w).Encode(github.CommitsComparison{
 			Files: []*github.CommitFile{
 				{
@@ -97,6 +102,28 @@ func TestGetBranchDiff_Success(t *testing.T) {
 	assert.Equal(t, "added", diffs[0].Status)
 	assert.Contains(t, diffs[0].Patch, "package auth")
 	assert.Equal(t, "src/main.go", diffs[1].Path)
+}
+
+func TestGetBranchDiff_RejectsPotentiallyTruncatedComparison(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/compare/main...feature", func(w http.ResponseWriter, _ *http.Request) {
+		files := make([]*github.CommitFile, 0, githubCompareFileLimit)
+		for i := 0; i < githubCompareFileLimit; i++ {
+			files = append(files, &github.CommitFile{
+				Filename: github.Ptr("src/file.go"),
+				Status:   github.Ptr("modified"),
+				Patch:    github.Ptr("@@ -1 +1 @@"),
+			})
+		}
+
+		_ = json.NewEncoder(w).Encode(github.CommitsComparison{Files: files})
+	})
+
+	c := newTestGHClient(t, mux)
+	_, err := c.GetBranchDiff(context.Background(), "owner", "repo", "main", "feature")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrComparisonTooLarge)
+	assert.Contains(t, err.Error(), "300 files")
 }
 
 func TestGetBranchDiff_NoChanges(t *testing.T) {
@@ -186,19 +213,203 @@ func TestCreateDraftPR_Success(t *testing.T) {
 	assert.Equal(t, "https://github.com/owner/repo/pull/99", url)
 }
 
-func TestCreateDraftPR_AlreadyExists(t *testing.T) {
+func TestCreateDraftPR_AlreadyExists_ReusesExistingPR(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnprocessableEntity)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "Validation Failed",
-			"errors":  []map[string]string{{"message": "A pull request already exists"}},
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Message: "Validation Failed",
+			Errors: []github.Error{
+				{Code: "already_exists", Message: "A pull request already exists"},
+			},
 		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/pulls", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "open", r.URL.Query().Get("state"))
+		assert.Equal(t, "owner:feature", r.URL.Query().Get("head"))
+		assert.Equal(t, "main", r.URL.Query().Get("base"))
+		assert.Equal(t, "1", r.URL.Query().Get("page"))
+		assert.Equal(t, "1", r.URL.Query().Get("per_page"))
+
+		_ = json.NewEncoder(w).Encode([]*github.PullRequest{
+			{
+				Number:  github.Ptr(101),
+				HTMLURL: github.Ptr("https://github.com/owner/repo/pull/101"),
+			},
+		})
+	})
+
+	c := newTestGHClient(t, mux)
+	num, url, err := c.CreateDraftPR(context.Background(), "owner", "repo", "Add auth", "body", "feature", "main")
+	require.NoError(t, err)
+	assert.Equal(t, 101, num)
+	assert.Equal(t, "https://github.com/owner/repo/pull/101", url)
+}
+
+func TestCreateDraftPR_AlreadyExists_WithoutExistingPRStillErrors(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Message: "Validation Failed",
+			Errors: []github.Error{
+				{Code: "already_exists", Message: "A pull request already exists"},
+			},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]*github.PullRequest{})
 	})
 
 	c := newTestGHClient(t, mux)
 	_, _, err := c.CreateDraftPR(context.Background(), "owner", "repo", "Add auth", "body", "feature", "main")
 	require.Error(t, err)
+}
+
+// --- IsNotFound tests ---
+
+func TestIsNotFound(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"actual 404", &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}, true},
+		{"403", &github.ErrorResponse{Response: &http.Response{StatusCode: 403}}, false},
+		{"nil response", &github.ErrorResponse{Response: nil}, false},
+		{"wrapped 404", fmt.Errorf("outer: %w", &github.ErrorResponse{Response: &http.Response{StatusCode: 404}}), true},
+		{"plain error", errors.New("not found"), false},
+		{"nil", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, IsNotFound(tt.err))
+		})
+	}
+}
+
+// --- isAlreadyExistsPRError tests ---
+
+func TestIsAlreadyExistsPRError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"by code",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Errors:   []github.Error{{Code: "already_exists"}},
+			},
+			true,
+		},
+		{
+			"by detail message",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Errors:   []github.Error{{Message: "A pull request Already Exists for this branch"}},
+			},
+			true,
+		},
+		{
+			"by top-level message",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Message:  "A pull request already exists",
+			},
+			true,
+		},
+		{
+			"non-422",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 500},
+				Errors:   []github.Error{{Code: "already_exists"}},
+			},
+			false,
+		},
+		{"nil response", &github.ErrorResponse{Response: nil}, false},
+		{"plain error", errors.New("something"), false},
+		{
+			"unrelated validation error",
+			&github.ErrorResponse{
+				Response: &http.Response{StatusCode: 422},
+				Message:  "Validation Failed",
+				Errors:   []github.Error{{Code: "invalid", Field: "title"}},
+			},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isAlreadyExistsPRError(tt.err))
+		})
+	}
+}
+
+// --- Boundary: 299 files should succeed ---
+
+func TestGetBranchDiff_BelowFileLimitSucceeds(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/compare/main...feature", func(w http.ResponseWriter, _ *http.Request) {
+		files := make([]*github.CommitFile, 0, githubCompareFileLimit-1)
+		for i := 0; i < githubCompareFileLimit-1; i++ {
+			files = append(files, &github.CommitFile{
+				Filename: github.Ptr(fmt.Sprintf("src/file%d.go", i)),
+				Status:   github.Ptr("modified"),
+				Patch:    github.Ptr("@@ -1 +1 @@"),
+			})
+		}
+		_ = json.NewEncoder(w).Encode(github.CommitsComparison{Files: files})
+	})
+
+	c := newTestGHClient(t, mux)
+	diffs, err := c.GetBranchDiff(context.Background(), "owner", "repo", "main", "feature")
+	require.NoError(t, err)
+	assert.Len(t, diffs, githubCompareFileLimit-1)
+}
+
+// --- PR lookup failure during already-exists recovery ---
+
+func TestCreateDraftPR_AlreadyExists_LookupFailure(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Message: "Validation Failed",
+			Errors:  []github.Error{{Code: "already_exists"}},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "Internal Server Error"})
+	})
+
+	c := newTestGHClient(t, mux)
+	_, _, err := c.CreateDraftPR(context.Background(), "owner", "repo", "Add auth", "body", "feature", "main")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "looking up existing PR")
+}
+
+// --- Nil lookup after already-exists reports the inconsistency ---
+
+func TestCreateDraftPR_AlreadyExists_EmptyLookupReportsInconsistency(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_ = json.NewEncoder(w).Encode(github.ErrorResponse{
+			Message: "Validation Failed",
+			Errors:  []github.Error{{Code: "already_exists"}},
+		})
+	})
+	mux.HandleFunc("GET /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]*github.PullRequest{})
+	})
+
+	c := newTestGHClient(t, mux)
+	_, _, err := c.CreateDraftPR(context.Background(), "owner", "repo", "Add auth", "body", "feature", "main")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "existing PR lookup returned no results")
 }
 
 func TestGetIssueComments_Success(t *testing.T) {

@@ -9,15 +9,24 @@ import (
 	"github.com/slb350/froggr/internal/ghub"
 )
 
-const froggrBotSuffix = "froggr[bot]"
+const (
+	froggrBotSuffix = "froggr[bot]"
+
+	// Keep upstream GitHub fetches bounded so large pushes do not fan out into
+	// dozens of content requests before prompt budgeting even starts.
+	maxContextDiffFiles    = 25
+	maxContextPriorReviews = 5
+)
 
 // Context holds all the information needed to build a review prompt.
 type Context struct {
-	Push         ghub.PushContext
-	Issue        ghub.IssueInfo
-	Diffs        []ghub.FileDiff
-	Files        []ghub.FileContent
-	PriorReviews []string
+	Push          ghub.PushContext
+	Issue         ghub.IssueInfo
+	Diffs         []ghub.FileDiff
+	Files         []ghub.FileContent
+	PriorReviews  []string
+	OmittedDiffs  int
+	OmittedPriors int
 }
 
 // BuildContext fetches the diff, file contents, issue details, and prior
@@ -39,23 +48,26 @@ func BuildContext(ctx context.Context, gh GitHubClient, push ghub.PushContext, i
 	}
 
 	filtered := filterDiffs(diffs, cfg)
+	boundedDiffs, omittedDiffs := limitDiffs(filtered, maxContextDiffFiles)
 
-	files, err := fetchFileContents(ctx, gh, push, filtered)
+	files, err := fetchFileContents(ctx, gh, push, boundedDiffs)
 	if err != nil {
 		return Context{}, fmt.Errorf("fetching file contents: %w", err)
 	}
 
-	priors, err := fetchPriorReviews(ctx, gh, push, issueNum)
+	priors, omittedPriors, err := fetchPriorReviews(ctx, gh, push, issueNum)
 	if err != nil {
 		return Context{}, fmt.Errorf("fetching prior reviews: %w", err)
 	}
 
 	return Context{
-		Push:         push,
-		Issue:        issue,
-		Diffs:        filtered,
-		Files:        files,
-		PriorReviews: priors,
+		Push:          push,
+		Issue:         issue,
+		Diffs:         boundedDiffs,
+		Files:         files,
+		PriorReviews:  priors,
+		OmittedDiffs:  omittedDiffs,
+		OmittedPriors: omittedPriors,
 	}, nil
 }
 
@@ -68,6 +80,17 @@ func filterDiffs(diffs []ghub.FileDiff, cfg config.Config) []ghub.FileDiff {
 		}
 	}
 	return result
+}
+
+// limitDiffs keeps diff context bounded by keeping the first N files from
+// GitHub's compare response and dropping the rest. The omission count is
+// surfaced to the model in the prompt. (Prior reviews use a different
+// strategy: they keep the most recent N instead — see fetchPriorReviews.)
+func limitDiffs(diffs []ghub.FileDiff, limit int) ([]ghub.FileDiff, int) {
+	if len(diffs) <= limit {
+		return diffs, 0
+	}
+	return diffs[:limit], len(diffs) - limit
 }
 
 // fetchFileContents fetches the content of each file that was added or modified.
@@ -87,10 +110,10 @@ func fetchFileContents(ctx context.Context, gh GitHubClient, push ghub.PushConte
 }
 
 // fetchPriorReviews returns the bodies of prior froggr bot comments on the issue.
-func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int) ([]string, error) {
+func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int) ([]string, int, error) {
 	comments, err := gh.GetIssueComments(ctx, push.Owner, push.Repo, issueNum)
 	if err != nil {
-		return nil, fmt.Errorf("fetching comments: %w", err)
+		return nil, 0, fmt.Errorf("fetching comments: %w", err)
 	}
 
 	var priors []string
@@ -99,5 +122,11 @@ func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushConte
 			priors = append(priors, c.GetBody())
 		}
 	}
-	return priors, nil
+
+	if len(priors) <= maxContextPriorReviews {
+		return priors, 0, nil
+	}
+
+	start := len(priors) - maxContextPriorReviews
+	return priors[start:], start, nil
 }

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/slb350/froggr/internal/config"
@@ -26,23 +27,19 @@ func NewEngine(ai AIClient) *Engine {
 func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error {
 	rc, err := BuildContext(ctx, gh, push, issueNum, cfg)
 	if err != nil {
+		if errors.Is(err, ghub.ErrComparisonTooLarge) {
+			return postSkippedReviewComment(ctx, gh, push, issueNum)
+		}
 		return fmt.Errorf("building context: %w", err)
 	}
 
-	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
-		Model: cfg.Model,
-		Messages: []openrouter.Message{
-			{Role: "system", Content: SystemPrompt()},
-			{Role: "user", Content: UserPrompt(rc)},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("AI review: %w", err)
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
-	result, err := ParseResponse(aiResponse)
+	result, err := e.runAIReview(ctx, rc, cfg.Model)
 	if err != nil {
-		return fmt.Errorf("parsing AI response: %w", err)
+		return err
 	}
 
 	comment := FormatComment(result, push)
@@ -51,12 +48,54 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 	}
 
 	if result.IsClean && cfg.AutoDraftPR {
-		title := fmt.Sprintf("%s (froggr reviewed)", rc.Issue.Title)
-		body := fmt.Sprintf("Closes #%d\n\nAuto-created by froggr after a clean review.", issueNum)
-		if _, _, err := gh.CreateDraftPR(ctx, push.Owner, push.Repo, title, body, push.Branch, push.DefaultBranch); err != nil {
-			return fmt.Errorf("creating draft PR: %w", err)
-		}
+		return maybeCreateDraftPR(ctx, gh, push, rc.Issue.Title, issueNum)
 	}
 
+	return nil
+}
+
+// runAIReview builds the prompt, calls the AI, and parses the response.
+func (e *Engine) runAIReview(ctx context.Context, rc Context, model string) (Result, error) {
+	userPrompt, err := UserPrompt(rc)
+	if err != nil {
+		return Result{}, fmt.Errorf("building prompt: %w", err)
+	}
+
+	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
+		Model: model,
+		Messages: []openrouter.Message{
+			{Role: "system", Content: SystemPrompt()},
+			{Role: "user", Content: userPrompt},
+		},
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("AI review: %w", err)
+	}
+
+	result, err := ParseResponse(aiResponse)
+	if err != nil {
+		return Result{}, fmt.Errorf("parsing AI response: %w", err)
+	}
+
+	return result, nil
+}
+
+func maybeCreateDraftPR(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueTitle string, issueNum int) error {
+	title := fmt.Sprintf("%s (froggr reviewed)", issueTitle)
+	body := fmt.Sprintf("Closes #%d\n\nAuto-created by froggr after a clean review.", issueNum)
+	if _, _, err := gh.CreateDraftPR(ctx, push.Owner, push.Repo, title, body, push.Branch, push.DefaultBranch); err != nil {
+		return fmt.Errorf("creating draft PR: %w", err)
+	}
+	return nil
+}
+
+func postSkippedReviewComment(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int) error {
+	comment := FormatSkippedComment(
+		push,
+		"GitHub only exposes up to 300 changed files for a branch comparison. This push is at or beyond that limit, so froggr will not pretend a partial diff was fully reviewed.\n\nSplit the branch into smaller changes or narrow the change set, then push again.",
+	)
+	if err := gh.CreateIssueComment(ctx, push.Owner, push.Repo, issueNum, comment); err != nil {
+		return fmt.Errorf("posting skipped review comment: %w", err)
+	}
 	return nil
 }

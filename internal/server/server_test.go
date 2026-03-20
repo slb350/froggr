@@ -1,10 +1,6 @@
 package server
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,18 +8,13 @@ import (
 	"time"
 
 	"github.com/slb350/froggr/internal/review"
+	"github.com/slb350/froggr/internal/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
 const testWebhookSecret = "test-webhook-secret" //nolint:gosec // test fixture
 
 // --- Helpers ---
-
-func signPayload(payload []byte, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
 
 func pushPayload() []byte {
 	return []byte(`{
@@ -42,7 +33,7 @@ func webhookRequest(eventType string, payload []byte, secret string) *http.Reque
 	req := httptest.NewRequest(http.MethodPost, "/webhook", strings.NewReader(string(payload)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Github-Event", eventType)
-	req.Header.Set("X-Hub-Signature-256", signPayload(payload, secret))
+	req.Header.Set("X-Hub-Signature-256", testutil.SignWebhookPayload(payload, secret))
 	return req
 }
 
@@ -55,7 +46,7 @@ func newTestServer(gh *mockGHClient, eng *mockReviewer) *Server {
 // --- Tests ---
 
 func TestServer_ValidPushWebhook(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -72,7 +63,7 @@ func TestServer_ValidPushWebhook(t *testing.T) {
 }
 
 func TestServer_InvalidSignature(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -86,7 +77,7 @@ func TestServer_InvalidSignature(t *testing.T) {
 }
 
 func TestServer_MalformedPayload(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -100,7 +91,7 @@ func TestServer_MalformedPayload(t *testing.T) {
 }
 
 func TestServer_UnknownEventType(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -115,7 +106,7 @@ func TestServer_UnknownEventType(t *testing.T) {
 }
 
 func TestServer_HealthEndpoint(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()

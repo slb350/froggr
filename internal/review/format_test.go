@@ -60,3 +60,13 @@ func TestFormatCleanComment(t *testing.T) {
 	assert.Contains(t, comment, "clean")
 	assert.NotContains(t, comment, "Bug")
 }
+
+func TestFormatSkippedComment(t *testing.T) {
+	push := ghub.PushContext{Branch: "42-too-large", HeadSHA: "abc1234567890"}
+	comment := FormatSkippedComment(push, "GitHub compare limit reached.")
+
+	assert.Contains(t, comment, "42-too-large")
+	assert.Contains(t, comment, "abc1234")
+	assert.Contains(t, comment, "Review skipped")
+	assert.Contains(t, comment, "GitHub compare limit reached.")
+}

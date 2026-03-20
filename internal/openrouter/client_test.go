@@ -28,7 +28,7 @@ func TestComplete_Success(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
 			Choices: []choice{
-				{Message: message{Role: "assistant", Content: "Review looks clean."}},
+				{Message: Message{Role: "assistant", Content: "Review looks clean."}},
 			},
 		})
 	})
@@ -49,7 +49,7 @@ func TestComplete_VerifiesHeaders(t *testing.T) {
 		assert.NotEmpty(t, r.Header.Get("X-Title"))
 
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: message{Content: "ok"}}},
+			Choices: []choice{{Message: Message{Content: "ok"}}},
 		})
 	})
 
@@ -74,7 +74,7 @@ func TestComplete_VerifiesBody(t *testing.T) {
 		assert.Equal(t, "diff here", req.Messages[1].Content)
 
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: message{Content: "ok"}}},
+			Choices: []choice{{Message: Message{Content: "ok"}}},
 		})
 	})
 
@@ -178,7 +178,7 @@ func TestComplete_EmptyChoices(t *testing.T) {
 func TestComplete_EmptyContent(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: message{Role: "assistant", Content: ""}}},
+			Choices: []choice{{Message: Message{Role: "assistant", Content: ""}}},
 		})
 	})
 
@@ -289,7 +289,7 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 func TestComplete_TrimsWhitespace(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: message{Content: "  result with whitespace  \n"}}},
+			Choices: []choice{{Message: Message{Content: "  result with whitespace  \n"}}},
 		})
 	})
 

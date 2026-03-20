@@ -40,6 +40,11 @@ ignore_paths:
 model: "anthropic/claude-sonnet-4"  # any OpenRouter model ID
 ```
 
+Missing config falls back to defaults. Other config fetch failures do not.
+If GitHub cannot read `.froggr.yml` because of auth, rate limits, or upstream
+errors, froggr skips the review rather than silently changing the repo's
+configured policy.
+
 ## Architecture
 
 ```
@@ -89,6 +94,7 @@ GitHub ──webhooks──> Webhook Server ──> Review Queue ──> Review 
 9. Post issue comment with findings
 10. If no issues found AND auto_draft_pr is enabled:
     a. Create draft PR via GitHub API
+       If the matching PR already exists, reuse it as the successful outcome
     b. Body includes `Closes #42`
     c. Post final comment on issue: "Draft PR opened: #XX"
 ```
@@ -108,6 +114,12 @@ Server-side state (in-memory only):
 
 **No database for MVP.** GitHub is the source of truth.
 
+Operational safety rules:
+
+- GitHub API clients use bounded HTTP timeouts
+- Debounced review runs inherit a handler-owned context with a hard timeout
+- Shutdown cancels in-flight reviews after the HTTP server stops accepting work
+
 ## AI Review Strategy
 
 ### Context Sent to the Model
@@ -119,6 +131,24 @@ Server-side state (in-memory only):
 | Full file content for changed files | Surrounding context for the diff |
 | Prior froggr comments | What was already flagged, what's been resolved |
 | `.froggr.yml` ignore paths | What to skip |
+
+froggr does not send an unbounded prompt. For speed and safety, review context
+is budgeted before it reaches the model:
+
+- At most 25 changed files are fetched for full review context
+- At most the 5 most recent froggr reviews are included
+- Large issue bodies, patches, file contents, and prior reviews are truncated
+- The final prompt has a hard size cap, and omissions are called out explicitly
+
+This keeps review latency and cost predictable and avoids depending on
+provider-side truncation, which is harder to reason about and easy to miss.
+
+froggr also treats GitHub's compare API limits as correctness boundaries. The
+compare endpoint exposes at most 300 changed files for a comparison, so if a
+branch hits that ceiling froggr refuses the review rather than overclaim that a
+partial diff was fully analyzed. In that case froggr posts an issue comment
+explaining that the change set must be split or narrowed before review can
+continue safely.
 
 ### Review Focus
 
@@ -154,6 +184,11 @@ Error from `validateToken()` is logged but the request continues. Should return 
 ---
 *Push fixes and I'll review again. When clean, I'll open a draft PR.*
 ```
+
+froggr parses model output conservatively. A run is only considered clean when
+the model returns an explicit empty JSON array. Malformed JSON, unsupported
+severities, missing finding fields, or off-format prose fail the run instead of
+being treated as a successful clean review.
 
 ### Resolved Issue Tracking
 

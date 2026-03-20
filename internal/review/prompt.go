@@ -5,6 +5,23 @@ import (
 	"strings"
 )
 
+const (
+	// Prompt budgeting is deliberate: bounded input keeps review latency and
+	// cost predictable, and avoids silent provider-side truncation on big pushes.
+
+	// maxPromptChars caps total prompt size (~30k tokens for most tokenizers).
+	maxPromptChars = 120000
+	// maxIssueBodyChars limits the issue description included for context.
+	maxIssueBodyChars = 4000
+	// maxDiffPatchChars limits each individual file diff patch.
+	maxDiffPatchChars = 8000
+	// maxFileContentChars limits each full file body fetched at HEAD.
+	maxFileContentChars = 12000
+	// maxPriorReviewChars limits each prior froggr review comment.
+	maxPriorReviewChars  = 4000
+	promptTruncationNote = "\n... [truncated to stay within froggr review budget]\n"
+)
+
 // SystemPrompt returns the system prompt that defines froggr's review focus.
 // It directs the AI to find bugs, security issues, and edge cases — not style.
 func SystemPrompt() string {
@@ -39,34 +56,155 @@ Example response:
 }
 
 // UserPrompt builds the user prompt from the review context.
-func UserPrompt(rc Context) string {
-	var b strings.Builder
+// It returns an error if the prompt budget is too small to include
+// the issue title or any code context (diffs or files).
+func UserPrompt(rc Context) (string, error) {
+	budget := newPromptBudget(maxPromptChars)
 
-	fmt.Fprintf(&b, "## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title)
+	if !budget.Write(fmt.Sprintf("## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title)) {
+		return "", fmt.Errorf("issue title exceeds prompt budget (%d chars)", maxPromptChars)
+	}
 	if rc.Issue.Body != "" {
-		fmt.Fprintf(&b, "%s\n\n", rc.Issue.Body)
+		_ = budget.Write(truncateForPrompt(rc.Issue.Body, maxIssueBodyChars) + "\n\n")
 	}
 
-	if len(rc.Diffs) > 0 {
-		b.WriteString("## Diff\n\n")
-		for _, d := range rc.Diffs {
-			fmt.Fprintf(&b, "### %s (%s)\n```diff\n%s\n```\n\n", d.Path, d.Status, d.Patch)
+	diffsWritten := writeDiffSection(budget, rc)
+	filesWritten := writeFileSection(budget, rc)
+	writePriorReviewSection(budget, rc)
+
+	hasCodeContext := len(rc.Diffs) > 0 || len(rc.Files) > 0
+	if hasCodeContext && !diffsWritten && !filesWritten {
+		return "", fmt.Errorf("prompt budget exhausted before any code context could be included")
+	}
+
+	return budget.String(), nil
+}
+
+// writeDiffSection writes diff context into the prompt budget.
+// Returns true if at least one diff was written.
+func writeDiffSection(budget *promptBudget, rc Context) bool {
+	if len(rc.Diffs) == 0 {
+		return false
+	}
+
+	_ = budget.Write("## Diff\n\n")
+	written := 0
+	omitted := rc.OmittedDiffs
+	for i, d := range rc.Diffs {
+		patch := d.Patch
+		if patch == "" {
+			patch = "[patch unavailable]"
+		}
+
+		chunk := fmt.Sprintf(
+			"### %s (%s)\n```diff\n%s\n```\n\n",
+			d.Path,
+			d.Status,
+			truncateForPrompt(patch, maxDiffPatchChars),
+		)
+		if !budget.Write(chunk) {
+			omitted += len(rc.Diffs) - i
+			break
+		}
+		written++
+	}
+	writeBudgetNote(budget, omitted, "diff file")
+	return written > 0
+}
+
+// writeFileSection writes file contents into the prompt budget.
+// Returns true if at least one file was written.
+func writeFileSection(budget *promptBudget, rc Context) bool {
+	if len(rc.Files) == 0 {
+		return false
+	}
+
+	_ = budget.Write("## Full File Contents\n\n")
+	written := 0
+	omitted := 0
+	for i, f := range rc.Files {
+		chunk := fmt.Sprintf(
+			"### %s\n```\n%s\n```\n\n",
+			f.Path,
+			truncateForPrompt(f.Content, maxFileContentChars),
+		)
+		if !budget.Write(chunk) {
+			omitted = len(rc.Files) - i
+			break
+		}
+		written++
+	}
+	writeBudgetNote(budget, omitted, "full file content block")
+	return written > 0
+}
+
+func writePriorReviewSection(budget *promptBudget, rc Context) {
+	if len(rc.PriorReviews) == 0 {
+		return
+	}
+
+	_ = budget.Write("## Prior Reviews\n\n")
+	omitted := rc.OmittedPriors
+	for i, r := range rc.PriorReviews {
+		chunk := fmt.Sprintf(
+			"### Prior Review %d\n%s\n\n",
+			i+1,
+			truncateForPrompt(r, maxPriorReviewChars),
+		)
+		if !budget.Write(chunk) {
+			omitted += len(rc.PriorReviews) - i
+			break
 		}
 	}
+	writeBudgetNote(budget, omitted, "prior review")
+}
 
-	if len(rc.Files) > 0 {
-		b.WriteString("## Full File Contents\n\n")
-		for _, f := range rc.Files {
-			fmt.Fprintf(&b, "### %s\n```\n%s\n```\n\n", f.Path, f.Content)
-		}
+type promptBudget struct {
+	b         strings.Builder
+	remaining int
+}
+
+func newPromptBudget(limit int) *promptBudget {
+	return &promptBudget{remaining: limit}
+}
+
+// Write only appends full chunks so we never cut through markdown fences or
+// headings mid-section when the prompt budget is exhausted.
+func (p *promptBudget) Write(chunk string) bool {
+	if len(chunk) > p.remaining {
+		return false
+	}
+	p.b.WriteString(chunk)
+	p.remaining -= len(chunk)
+	return true
+}
+
+func (p *promptBudget) String() string {
+	return p.b.String()
+}
+
+func truncateForPrompt(s string, limit int) string {
+	if len(s) <= limit {
+		return s
 	}
 
-	if len(rc.PriorReviews) > 0 {
-		b.WriteString("## Prior Reviews\n\n")
-		for i, r := range rc.PriorReviews {
-			fmt.Fprintf(&b, "### Prior Review %d\n%s\n\n", i+1, r)
-		}
+	keep := limit - len(promptTruncationNote)
+	if keep <= 0 {
+		return promptTruncationNote[:limit]
 	}
 
-	return b.String()
+	return s[:keep] + promptTruncationNote
+}
+
+func writeBudgetNote(budget *promptBudget, omitted int, label string) {
+	if omitted <= 0 {
+		return
+	}
+
+	note := fmt.Sprintf(
+		"_Context note: omitted %d additional %s(s) to stay within the froggr review budget._\n\n",
+		omitted,
+		label,
+	)
+	_ = budget.Write(note)
 }

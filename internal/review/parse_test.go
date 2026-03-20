@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,4 +85,61 @@ func TestParse_ConcernPattern(t *testing.T) {
 func TestParse_EmptyResponse(t *testing.T) {
 	_, err := ParseResponse("")
 	require.Error(t, err)
+}
+
+func TestParse_InvalidJSONFinding_Severity(t *testing.T) {
+	response := `[{"severity":"Info","file":"src/auth.go","line":1,"description":"not allowed"}]`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+	assert.Contains(t, err.Error(), "unsupported severity")
+}
+
+func TestParse_InvalidJSONFinding_MissingFields(t *testing.T) {
+	response := `[{"severity":"Bug","file":"","line":0,"description":""}]`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+}
+
+func TestParse_UnrecognizedTextFailsClosed(t *testing.T) {
+	response := `I think this looks good overall.`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+}
+
+func TestParse_SeverityNormalization(t *testing.T) {
+	tests := []struct {
+		name     string
+		severity string
+		want     Severity
+	}{
+		{"lowercase bug", "bug", SeverityBug},
+		{"lowercase concern", "concern", SeverityConcern},
+		{"mixed case Bug", "Bug", SeverityBug},
+		{"whitespace around Concern", " Concern ", SeverityConcern},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			response := fmt.Sprintf(`[{"severity":%q,"file":"src/auth.go","line":1,"description":"test"}]`, tt.severity)
+			result, err := ParseResponse(response)
+			require.NoError(t, err)
+			require.Len(t, result.Findings, 1)
+			assert.Equal(t, tt.want, result.Findings[0].Severity)
+		})
+	}
+}
+
+func TestParse_InvalidFencedJSONFailsClosed(t *testing.T) {
+	response := "```json\n" +
+		`[{"severity":"Bug","file":"","line":0,"description":""}]` +
+		"\n```"
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
 }

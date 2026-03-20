@@ -1,26 +1,18 @@
 package ghub
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/google/go-github/v84/github"
+	"github.com/slb350/froggr/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 const testSecret = "test-webhook-secret" //nolint:gosec // test fixture, not a real credential
-
-func signPayload(payload []byte, secret string) string {
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
-}
 
 func newWebhookRequest(t *testing.T, eventType string, payload []byte, secret string) *http.Request {
 	t.Helper()
@@ -28,7 +20,7 @@ func newWebhookRequest(t *testing.T, eventType string, payload []byte, secret st
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Github-Event", eventType)
-	req.Header.Set("X-Hub-Signature-256", signPayload(payload, secret))
+	req.Header.Set("X-Hub-Signature-256", testutil.SignWebhookPayload(payload, secret))
 	return req
 }
 

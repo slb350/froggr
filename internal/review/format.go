@@ -12,10 +12,7 @@ const shortSHALen = 7
 
 // FormatComment formats a Result as a GitHub markdown comment.
 func FormatComment(result Result, push ghub.PushContext) string {
-	shortSHA := push.HeadSHA
-	if len(shortSHA) > shortSHALen {
-		shortSHA = shortSHA[:shortSHALen]
-	}
+	shortSHA := shortSHA(push.HeadSHA)
 
 	var b strings.Builder
 
@@ -41,6 +38,25 @@ func FormatComment(result Result, push ghub.PushContext) string {
 	}
 
 	return b.String()
+}
+
+// FormatSkippedComment explains why froggr deliberately skipped a review.
+func FormatSkippedComment(push ghub.PushContext, reason string) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "## froggr review: `%s` @ `%s`\n\n", push.Branch, shortSHA(push.HeadSHA))
+	b.WriteString("Review skipped.\n\n")
+	b.WriteString(reason)
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > shortSHALen {
+		return sha[:shortSHALen]
+	}
+	return sha
 }
 
 // severityOrder returns a sort key for severity (lower = higher priority).
