@@ -15,6 +15,8 @@ import (
 
 const froggrConfigPath = ".froggr.yml"
 
+const reviewTimeout = 3 * time.Minute
+
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
 type ClientFactory func(installationID int64) review.GitHubClient
 
@@ -46,6 +48,8 @@ type Handler struct {
 	engine  ReviewRunner
 	buf     *debounce.Buffer
 	logger  *slog.Logger
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	mu            sync.Mutex
 	issueBranches map[issueRef]debounce.Key
@@ -54,10 +58,13 @@ type Handler struct {
 // NewHandler creates a Handler with the given dependencies.
 // The debounce buffer is created internally with the provided window duration.
 func NewHandler(clients ClientFactory, engine ReviewRunner, debounceWindow time.Duration, logger *slog.Logger) *Handler {
+	reviewCtx, cancel := context.WithCancel(context.Background())
 	h := &Handler{
 		clients:       clients,
 		engine:        engine,
 		logger:        logger,
+		ctx:           reviewCtx,
+		cancel:        cancel,
 		issueBranches: make(map[issueRef]debounce.Key),
 	}
 	h.buf = debounce.NewBuffer(debounceWindow, h.onDebounce)
@@ -73,7 +80,15 @@ func (h *Handler) HandlePush(ctx context.Context, push ghub.PushContext) {
 	}
 
 	gh := h.clients(push.InstallationID)
-	cfg := h.loadConfig(ctx, gh, push)
+	cfg, err := h.loadConfig(ctx, gh, push)
+	if err != nil {
+		h.logger.Warn("skipping review because repo config could not be loaded",
+			"error", err,
+			"branch", push.Branch,
+			"repo", push.Owner+"/"+push.Repo,
+		)
+		return
+	}
 
 	issueNum, ok := cfg.MatchBranch(push.Branch)
 	if !ok {
@@ -108,9 +123,11 @@ func (h *Handler) HandleIssuesClosed(owner, repo string, issueNum int) {
 	}
 }
 
-// Stop cancels all pending reviews. No further callbacks will fire.
+// Stop cancels all pending reviews and any in-flight review work started from
+// this handler. No further callbacks will fire.
 func (h *Handler) Stop() {
 	h.buf.Stop()
+	h.cancel()
 }
 
 // onDebounce is called when the debounce window expires for a push.
@@ -121,8 +138,11 @@ func (h *Handler) onDebounce(_ debounce.Key, data any) {
 	delete(h.issueBranches, issueRef{owner: pd.push.Owner, repo: pd.push.Repo, issue: pd.issueNum})
 	h.mu.Unlock()
 
+	reviewCtx, cancel := context.WithTimeout(h.ctx, reviewTimeout)
+	defer cancel()
+
 	h.logger.Info("starting review", "branch", pd.push.Branch, "issue", pd.issueNum)
-	if err := h.engine.Review(context.Background(), pd.gh, pd.push, pd.issueNum, pd.cfg); err != nil {
+	if err := h.engine.Review(reviewCtx, pd.gh, pd.push, pd.issueNum, pd.cfg); err != nil {
 		h.logger.Error("review failed",
 			"error", err,
 			"branch", pd.push.Branch,
@@ -132,19 +152,24 @@ func (h *Handler) onDebounce(_ debounce.Key, data any) {
 }
 
 // loadConfig fetches .froggr.yml from the repo and parses it.
-// Falls back to defaults if the file is missing or invalid.
-func (h *Handler) loadConfig(ctx context.Context, gh review.GitHubClient, push ghub.PushContext) config.Config {
+// Falls back to defaults only when the file is genuinely absent. Other fetch
+// failures are treated as unsafe because silently changing review policy is worse
+// than skipping a run.
+func (h *Handler) loadConfig(ctx context.Context, gh review.GitHubClient, push ghub.PushContext) (config.Config, error) {
 	fc, err := gh.GetFileContent(ctx, push.Owner, push.Repo, froggrConfigPath, push.HeadSHA)
 	if err != nil {
-		h.logger.Debug("no .froggr.yml found, using defaults", "error", err)
-		return config.Defaults()
+		if ghub.IsNotFound(err) {
+			h.logger.Debug("no .froggr.yml found, using defaults")
+			return config.Defaults(), nil
+		}
+		return config.Config{}, err
 	}
 
 	cfg, err := config.Parse([]byte(fc.Content))
 	if err != nil {
 		h.logger.Warn("invalid .froggr.yml, using defaults", "error", err)
-		return config.Defaults()
+		return config.Defaults(), nil
 	}
 
-	return cfg
+	return cfg, nil
 }

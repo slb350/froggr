@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/slb350/froggr/internal/config"
@@ -26,6 +27,9 @@ func NewEngine(ai AIClient) *Engine {
 func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error {
 	rc, err := BuildContext(ctx, gh, push, issueNum, cfg)
 	if err != nil {
+		if errors.Is(err, ghub.ErrComparisonTooLarge) {
+			return postSkippedReviewComment(ctx, gh, push, issueNum)
+		}
 		return fmt.Errorf("building context: %w", err)
 	}
 
@@ -58,5 +62,16 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 		}
 	}
 
+	return nil
+}
+
+func postSkippedReviewComment(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int) error {
+	comment := FormatSkippedComment(
+		push,
+		"GitHub only exposes up to 300 changed files for a branch comparison. This push is at or beyond that limit, so froggr will not pretend a partial diff was fully reviewed.\n\nSplit the branch into smaller changes or narrow the change set, then push again.",
+	)
+	if err := gh.CreateIssueComment(ctx, push.Owner, push.Repo, issueNum, comment); err != nil {
+		return fmt.Errorf("posting skipped review comment: %w", err)
+	}
 	return nil
 }

@@ -3,10 +3,13 @@ package ghub
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	ghinstallation "github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v84/github"
 )
+
+const defaultGitHubTimeout = 30 * time.Second
 
 // AppAuth handles GitHub App authentication using a private key.
 // It creates per-installation GitHub API clients.
@@ -29,5 +32,10 @@ func NewAppAuth(appID int64, privateKeyPEM []byte) (*AppAuth, error) {
 // installation. The underlying transport handles token refresh automatically.
 func (a *AppAuth) ClientForInstallation(installationID int64) *github.Client {
 	itr := ghinstallation.NewFromAppsTransport(a.appsTransport, installationID)
-	return github.NewClient(&http.Client{Transport: itr})
+	// Bound GitHub API calls so a stalled upstream cannot outlive shutdown
+	// forever or pin review workers indefinitely.
+	return github.NewClient(&http.Client{
+		Transport: itr,
+		Timeout:   defaultGitHubTimeout,
+	})
 }

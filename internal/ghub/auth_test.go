@@ -42,4 +42,5 @@ func TestClientForInstallation_ReturnsClient(t *testing.T) {
 
 	client := auth.ClientForInstallation(67890)
 	assert.NotNil(t, client)
+	assert.Equal(t, defaultGitHubTimeout, client.Client().Timeout)
 }

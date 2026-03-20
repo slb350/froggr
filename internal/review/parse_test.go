@@ -85,3 +85,38 @@ func TestParse_EmptyResponse(t *testing.T) {
 	_, err := ParseResponse("")
 	require.Error(t, err)
 }
+
+func TestParse_InvalidJSONFinding_Severity(t *testing.T) {
+	response := `[{"severity":"Info","file":"src/auth.go","line":1,"description":"not allowed"}]`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+	assert.Contains(t, err.Error(), "unsupported severity")
+}
+
+func TestParse_InvalidJSONFinding_MissingFields(t *testing.T) {
+	response := `[{"severity":"Bug","file":"","line":0,"description":""}]`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+}
+
+func TestParse_UnrecognizedTextFailsClosed(t *testing.T) {
+	response := `I think this looks good overall.`
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+}
+
+func TestParse_InvalidFencedJSONFailsClosed(t *testing.T) {
+	response := "```json\n" +
+		`[{"severity":"Bug","file":"","line":0,"description":""}]` +
+		"\n```"
+
+	_, err := ParseResponse(response)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+}

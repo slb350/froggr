@@ -4,7 +4,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,7 +54,7 @@ func newTestServer(gh *mockGHClient, eng *mockReviewer) *Server {
 // --- Tests ---
 
 func TestServer_ValidPushWebhook(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -72,7 +71,7 @@ func TestServer_ValidPushWebhook(t *testing.T) {
 }
 
 func TestServer_InvalidSignature(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -86,7 +85,7 @@ func TestServer_InvalidSignature(t *testing.T) {
 }
 
 func TestServer_MalformedPayload(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -100,7 +99,7 @@ func TestServer_MalformedPayload(t *testing.T) {
 }
 
 func TestServer_UnknownEventType(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()
@@ -115,7 +114,7 @@ func TestServer_UnknownEventType(t *testing.T) {
 }
 
 func TestServer_HealthEndpoint(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	srv := newTestServer(gh, eng)
 	defer srv.Stop()

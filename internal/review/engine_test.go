@@ -16,9 +16,11 @@ import (
 type mockAI struct {
 	response string
 	err      error
+	calls    int
 }
 
 func (m *mockAI) Complete(_ context.Context, _ openrouter.CompletionRequest) (string, error) {
+	m.calls++
 	return m.response, m.err
 }
 
@@ -124,6 +126,18 @@ func TestEngine_Review_AIError_Propagates(t *testing.T) {
 	assert.Contains(t, err.Error(), "rate limited")
 }
 
+func TestEngine_Review_InvalidAIResponse_Propagates(t *testing.T) {
+	gh := baseGitHub()
+	ai := &mockAI{response: "looks good to me"}
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidAIResponse)
+	assert.Empty(t, gh.commentPosted)
+	assert.False(t, gh.draftPRCreated)
+}
+
 func TestEngine_Review_ContextCancellation(t *testing.T) {
 	gh := baseGitHub()
 	ai := &mockAI{err: context.Canceled}
@@ -134,6 +148,21 @@ func TestEngine_Review_ContextCancellation(t *testing.T) {
 	engine := NewEngine(ai)
 	err := engine.Review(ctx, gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
+}
+
+func TestEngine_Review_ComparisonTooLarge_PostsSkipComment(t *testing.T) {
+	gh := baseGitHub()
+	gh.diffErr = ghub.ErrComparisonTooLarge
+	ai := &mockAI{response: "[]"}
+
+	engine := NewEngine(ai)
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.NoError(t, err)
+
+	assert.Contains(t, gh.commentPosted, "Review skipped")
+	assert.Contains(t, gh.commentPosted, "up to 300 changed files")
+	assert.Equal(t, 0, ai.calls)
+	assert.False(t, gh.draftPRCreated)
 }
 
 // Ensure mockGitHub satisfies GitHubClient at compile time.

@@ -11,6 +11,7 @@ Navigate your code through traffic to a safe place.
 3. **froggr reviews your code** on every push and posts findings in the issue thread
 4. **Fix, push, repeat** — froggr re-reviews, tracking what's been resolved
 5. **When clean, froggr opens a draft PR** linked to the issue automatically
+   If that PR already exists on a later clean push, froggr reuses it instead of failing on duplicate creation.
 
 ```
 Issue #42: Add user authentication
@@ -47,6 +48,10 @@ ignore_paths:
 # See: https://openrouter.ai/models
 model: "anthropic/claude-sonnet-4.6"
 ```
+
+If `.froggr.yml` is missing, froggr uses defaults. If GitHub cannot read the
+file for some other reason, froggr skips the review rather than silently
+changing review policy.
 
 froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use any model — Claude, GPT-5, Gemini 3, Qwen 3.5, MiniMax, or whatever suits your codebase and budget.
 
@@ -94,6 +99,14 @@ froggr exposes two endpoints:
 - `POST /webhook` — GitHub webhook receiver
 - `GET /health` — liveness/readiness probe
 
+Review runs are bounded. GitHub API calls use a client timeout, and in-flight
+reviews are canceled during shutdown so a stalled upstream cannot hang the
+service indefinitely.
+
+Model output is validated strictly. froggr only accepts an explicit empty JSON
+array for a clean review or structured findings it can validate; malformed or
+off-format AI output fails the run instead of being treated as "all clear."
+
 ### Local Development
 
 ```bash
@@ -135,6 +148,11 @@ predictable instead of timing out or relying on provider-side truncation.
 This is an explicit tradeoff: on very large pushes, froggr prefers a smaller,
 stable review packet over an unbounded prompt that is slow, expensive, and
 more likely to fail formatting or be silently clipped upstream.
+
+froggr also fails closed on GitHub's compare-file ceiling. If a branch
+comparison reaches GitHub's 300 changed-file limit, froggr will refuse the
+review rather than claim a partial diff was fully reviewed, and it posts an
+issue comment explaining why the review was skipped.
 
 See [docs/](./docs/) for detailed design decisions.
 

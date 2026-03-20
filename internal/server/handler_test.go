@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -28,15 +28,17 @@ type mockReviewer struct {
 }
 
 type reviewCall struct {
-	push     ghub.PushContext
-	issueNum int
-	cfg      config.Config
+	push        ghub.PushContext
+	issueNum    int
+	cfg         config.Config
+	hasDeadline bool
 }
 
-func (m *mockReviewer) Review(_ context.Context, _ review.GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error {
+func (m *mockReviewer) Review(ctx context.Context, _ review.GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.calls = append(m.calls, reviewCall{push: push, issueNum: issueNum, cfg: cfg})
+	_, hasDeadline := ctx.Deadline()
+	m.calls = append(m.calls, reviewCall{push: push, issueNum: issueNum, cfg: cfg, hasDeadline: hasDeadline})
 	return m.err
 }
 
@@ -93,7 +95,7 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newTestHandler(gh *mockGHClient, eng *mockReviewer) *Handler {
+func newTestHandler(gh *mockGHClient, eng ReviewRunner) *Handler {
 	factory := func(_ int64) review.GitHubClient {
 		return gh
 	}
@@ -123,10 +125,14 @@ func noReview(t *testing.T, eng *mockReviewer, wait time.Duration) {
 	assert.Empty(t, eng.getCalls(), "expected no review calls")
 }
 
+func notFoundError() error {
+	return &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusNotFound}}
+}
+
 // --- Tests ---
 
 func TestHandlePush_MatchingBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -136,10 +142,11 @@ func TestHandlePush_MatchingBranch(t *testing.T) {
 	call := waitForReview(t, eng, 500*time.Millisecond)
 	assert.Equal(t, "42-add-auth", call.push.Branch)
 	assert.Equal(t, 42, call.issueNum)
+	assert.True(t, call.hasDeadline)
 }
 
 func TestHandlePush_NonMatchingBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -152,7 +159,7 @@ func TestHandlePush_NonMatchingBranch(t *testing.T) {
 }
 
 func TestHandlePush_DefaultBranch(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -165,7 +172,7 @@ func TestHandlePush_DefaultBranch(t *testing.T) {
 }
 
 func TestHandleIssuesClosed(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -199,7 +206,7 @@ func TestHandler_FetchesRepoConfig(t *testing.T) {
 }
 
 func TestHandler_FallbackToDefaults(t *testing.T) {
-	gh := &mockGHClient{fileErr: errors.New("file not found")}
+	gh := &mockGHClient{fileErr: notFoundError()}
 	eng := &mockReviewer{}
 	h := newTestHandler(gh, eng)
 	defer h.Stop()
@@ -212,6 +219,59 @@ func TestHandler_FallbackToDefaults(t *testing.T) {
 	assert.True(t, call.cfg.AutoDraftPR)
 }
 
+func TestHandler_ConfigFetchFailure_SkipsReview(t *testing.T) {
+	gh := &mockGHClient{
+		fileErr: &github.ErrorResponse{Response: &http.Response{StatusCode: http.StatusForbidden}},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	noReview(t, eng, testDebounceWindow*3)
+}
+
+type blockingReviewer struct {
+	started  chan struct{}
+	canceled chan error
+	once     sync.Once
+}
+
+func (b *blockingReviewer) Review(ctx context.Context, _ review.GitHubClient, _ ghub.PushContext, _ int, _ config.Config) error {
+	b.once.Do(func() { close(b.started) })
+	<-ctx.Done()
+	b.canceled <- ctx.Err()
+	return ctx.Err()
+}
+
+func TestHandler_StopCancelsInFlightReview(t *testing.T) {
+	gh := &mockGHClient{fileErr: notFoundError()}
+	eng := &blockingReviewer{
+		started:  make(chan struct{}),
+		canceled: make(chan error, 1),
+	}
+	h := newTestHandler(gh, eng)
+
+	h.HandlePush(context.Background(), testPush())
+
+	select {
+	case <-eng.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for review to start")
+	}
+
+	h.Stop()
+
+	select {
+	case err := <-eng.canceled:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for review cancellation")
+	}
+}
+
 // Compile-time interface checks.
 var _ ReviewRunner = (*mockReviewer)(nil)
+var _ ReviewRunner = (*blockingReviewer)(nil)
 var _ review.GitHubClient = (*mockGHClient)(nil)
