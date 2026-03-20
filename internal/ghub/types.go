@@ -1,8 +1,6 @@
 // Package ghub provides GitHub App authentication, webhook handling, and API operations.
 package ghub
 
-import "time"
-
 // PushContext holds the extracted context from a GitHub push event.
 type PushContext struct {
 	InstallationID int64
@@ -32,11 +30,4 @@ type FileDiff struct {
 type FileContent struct {
 	Path    string
 	Content string
-}
-
-// PriorComment represents a previous comment on an issue.
-type PriorComment struct {
-	ID        int64
-	Body      string
-	CreatedAt time.Time
 }
