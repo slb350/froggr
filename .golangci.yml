@@ -1,0 +1,29 @@
+version: "2"
+run:
+  tests: true
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - revive
+    - gosec
+    - misspell
+    - unconvert
+    - goconst
+    - gocyclo
+    - gocritic
+  settings:
+    gocyclo:
+      min-complexity: 10
+    govet:
+      enable:
+        - shadow
+    misspell:
+      locale: US
+formatters:
+  enable:
+    - gofmt
+    - goimports

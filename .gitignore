@@ -28,6 +28,9 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+# === Build ===
+bin/
+
 # === Go ===
 *.exe
 *.exe~
