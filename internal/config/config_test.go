@@ -202,6 +202,6 @@ func TestDefaults(t *testing.T) {
 
 	assert.NotNil(t, cfg.BranchPattern)
 	assert.True(t, cfg.AutoDraftPR)
-	assert.Equal(t, "anthropic/claude-sonnet-4", cfg.Model)
+	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
 	assert.NotEmpty(t, cfg.IgnorePaths)
 }

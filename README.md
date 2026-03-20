@@ -45,18 +45,84 @@ ignore_paths:
 
 # Any model available on OpenRouter
 # See: https://openrouter.ai/models
-model: "anthropic/claude-sonnet-4"
+model: "anthropic/claude-sonnet-4.6"
 ```
 
-froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use any model — Claude, GPT-4, Gemini, Llama, Mistral, or whatever suits your codebase and budget.
+froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use any model — Claude, GPT-5, Gemini 3, Qwen 3.5, MiniMax, or whatever suits your codebase and budget.
 
-## Installation
+**Popular models for code review:**
+- `anthropic/claude-sonnet-4.6` — strong reasoning, good cost/quality balance (default)
+- `anthropic/claude-opus-4.6` — best quality, higher cost
+- `openai/gpt-5.3-codex` — purpose-built for code
+- `google/gemini-3.1-pro-preview` — large context, strong reasoning
+- `qwen/qwen3-coder` — code-specialized, competitive quality
+- `minimax/minimax-m2.7` — fast, strong general reasoning
 
-> Coming soon — froggr is in early development.
+## Self-Hosting
 
-## Development
+### Prerequisites
 
-See [docs/](./docs/) for architecture and design.
+- Go 1.22+
+- A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) with:
+  - Webhook URL pointing to your server's `/webhook` endpoint
+  - Permissions: Issues (read/write), Pull requests (read/write), Contents (read)
+  - Events: Push, Issues
+- An [OpenRouter API key](https://openrouter.ai/keys)
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_APP_ID` | Yes | Your GitHub App's ID |
+| `GITHUB_PRIVATE_KEY` | Yes | PEM-encoded private key for the GitHub App |
+| `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for webhook signature validation |
+| `OPENROUTER_API_KEY` | Yes | API key for OpenRouter |
+| `PORT` | No | Server port (default: `8080`) |
+
+### Run
+
+```bash
+# Build and run
+go build -o bin/froggr ./cmd/froggr
+./bin/froggr
+
+# Or run directly
+go run ./cmd/froggr
+```
+
+froggr exposes two endpoints:
+- `POST /webhook` — GitHub webhook receiver
+- `GET /health` — liveness/readiness probe
+
+### Local Development
+
+```bash
+# Run tests
+go test ./... -race -count=1
+
+# Lint (requires golangci-lint v2)
+golangci-lint run
+
+# Full check (format, lint, test)
+just check
+
+# Expose localhost for GitHub webhooks
+# Use smee.io or ngrok to forward to http://localhost:8080/webhook
+```
+
+## Architecture
+
+```
+cmd/froggr/          → entry point, dependency wiring
+internal/config/     → .froggr.yml parsing, branch pattern matching
+internal/openrouter/ → OpenRouter chat completion HTTP client
+internal/ghub/       → GitHub App auth, webhook parsing, API client
+internal/debounce/   → timer-based push debounce (30s window)
+internal/review/     → AI review engine (context → prompt → parse → format)
+internal/server/     → HTTP server, webhook routing, event handler
+```
+
+See [docs/](./docs/) for detailed design decisions.
 
 ## License
 

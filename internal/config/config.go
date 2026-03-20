@@ -13,7 +13,7 @@ import (
 
 const (
 	defaultBranchPattern = `^(\d+)-`
-	defaultModel         = "anthropic/claude-sonnet-4"
+	defaultModel         = "anthropic/claude-sonnet-4.6"
 )
 
 // Config holds the parsed .froggr.yml configuration for a repository.
