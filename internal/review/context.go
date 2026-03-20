@@ -7,14 +7,22 @@ import (
 
 	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
+	// froggrBotSuffix identifies froggr's own comments by matching the GitHub
+	// App bot login suffix (e.g., "froggr[bot]").
 	froggrBotSuffix = "froggr[bot]"
 
 	// Keep upstream GitHub fetches bounded so large pushes do not fan out into
 	// dozens of content requests before prompt budgeting even starts.
-	maxContextDiffFiles    = 25
+	// 25 files is large enough for typical feature branches while keeping API
+	// usage and prompt size manageable.
+	maxContextDiffFiles = 25
+	// 5 prior reviews gives the model enough history to track what was fixed
+	// without flooding the prompt. We keep the most recent N (not the first N)
+	// because recent reviews are more relevant to the current push.
 	maxContextPriorReviews = 5
 )
 
@@ -93,20 +101,51 @@ func limitDiffs(diffs []ghub.FileDiff, limit int) ([]ghub.FileDiff, int) {
 	return diffs[:limit], len(diffs) - limit
 }
 
-// fetchFileContents fetches the content of each file that was added or modified.
+// maxConcurrentFetches limits parallel GitHub content requests to avoid
+// hitting secondary rate limits while still being significantly faster
+// than sequential fetching.
+const maxConcurrentFetches = 10
+
+// fetchFileContents fetches the content of each non-removed file in parallel.
+// Up to maxConcurrentFetches requests run concurrently. If any fetch fails the
+// entire group is canceled and the first error is returned.
 func fetchFileContents(ctx context.Context, gh GitHubClient, push ghub.PushContext, diffs []ghub.FileDiff) ([]ghub.FileContent, error) {
-	var files []ghub.FileContent
-	for _, d := range diffs {
-		if d.Status == "removed" {
-			continue
-		}
-		fc, err := gh.GetFileContent(ctx, push.Owner, push.Repo, d.Path, push.HeadSHA)
-		if err != nil {
-			return nil, fmt.Errorf("fetching %s: %w", d.Path, err)
-		}
-		files = append(files, fc)
+	// Build the list of files to fetch, skipping removed files (no content at HEAD).
+	type indexedDiff struct {
+		idx  int
+		diff ghub.FileDiff
 	}
-	return files, nil
+	toFetch := make([]indexedDiff, 0, len(diffs))
+	for _, d := range diffs {
+		if d.Status != "removed" {
+			toFetch = append(toFetch, indexedDiff{idx: len(toFetch), diff: d})
+		}
+	}
+	if len(toFetch) == 0 {
+		return nil, nil
+	}
+
+	// Each goroutine writes to a distinct index — no mutex needed.
+	results := make([]ghub.FileContent, len(toFetch))
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(maxConcurrentFetches)
+
+	for _, item := range toFetch {
+		g.Go(func() error {
+			fc, err := gh.GetFileContent(gctx, push.Owner, push.Repo, item.diff.Path, push.HeadSHA)
+			if err != nil {
+				return fmt.Errorf("fetching %s: %w", item.diff.Path, err)
+			}
+			results[item.idx] = fc
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // fetchPriorReviews returns the bodies of prior froggr bot comments on the issue.
@@ -126,6 +165,11 @@ func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushConte
 	if len(priors) <= maxContextPriorReviews {
 		return priors, 0, nil
 	}
+
+	// Keep the most recent N, not the first N. Recent reviews track what was
+	// fixed vs. what remains, which is more useful context than early reviews
+	// about code that may have been rewritten. (This differs from limitDiffs,
+	// which keeps the first N — diffs are ordered by path, not time.)
 
 	start := len(priors) - maxContextPriorReviews
 	return priors[start:], start, nil

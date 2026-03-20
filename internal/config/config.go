@@ -12,9 +12,15 @@ import (
 )
 
 const (
+	// defaultBranchPattern extracts issue numbers from branch names like
+	// "42-add-auth" → issue #42. The first capture group must be the number.
 	defaultBranchPattern = `^(\d+)-`
 	defaultModel         = "anthropic/claude-sonnet-4.6"
 )
+
+// defaultBranchPatternRE is compiled once to avoid re-compiling on every
+// Defaults() call (which runs on each push when .froggr.yml is missing).
+var defaultBranchPatternRE = regexp.MustCompile(defaultBranchPattern)
 
 // Config holds the parsed .froggr.yml configuration for a repository.
 type Config struct {
@@ -35,7 +41,7 @@ type rawConfig struct {
 // Defaults returns a Config with sensible default values.
 func Defaults() Config {
 	return Config{
-		BranchPattern: regexp.MustCompile(defaultBranchPattern),
+		BranchPattern: defaultBranchPatternRE,
 		AutoDraftPR:   true,
 		IgnorePaths:   []string{"*.lock", "vendor/**", "generated/**"},
 		Model:         defaultModel,
@@ -95,7 +101,7 @@ func (c Config) MatchBranch(name string) (int, bool) {
 	}
 
 	num, err := strconv.Atoi(matches[1])
-	if err != nil {
+	if err != nil || num <= 0 {
 		return 0, false
 	}
 
@@ -132,7 +138,10 @@ func matchIgnorePattern(pattern, path string) bool {
 	return globMatch(pattern, path)
 }
 
-// globMatch does simple glob matching: * matches any non-separator sequence,
+// globMatch does simple glob matching. We use a custom implementation instead
+// of filepath.Match because filepath.Match doesn't support ** for recursive
+// directory matching and uses OS-specific path separators.
+// * matches any non-separator sequence,
 // ? matches a single non-separator character. Does not support **.
 func globMatch(pattern, name string) bool {
 	for len(pattern) > 0 {

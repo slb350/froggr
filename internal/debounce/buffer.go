@@ -59,14 +59,16 @@ func (b *Buffer) Push(key Key, data any) {
 
 	if e, ok := b.entries[key]; ok {
 		if e.timer.Stop() {
-			// Timer hadn't fired yet; safe to reuse.
+			// Timer hadn't fired yet; safe to reuse the entry.
 			e.data = data
 			e.timer.Reset(b.window)
 			return
 		}
-		// Timer already fired; a stale fire() goroutine may be pending.
-		// Fall through to create a new entry so the stale goroutine
-		// sees a different *entry and exits harmlessly.
+		// Timer already fired — a stale fire() goroutine may be blocked
+		// waiting for this lock. We must NOT reuse this entry because fire()
+		// will compare the *entry pointer to detect staleness. By creating a
+		// new entry below, the stale goroutine's pointer check (e != expected)
+		// fails and it exits without calling the callback.
 	}
 
 	e := &entry{data: data}
@@ -99,9 +101,12 @@ func (b *Buffer) Stop() {
 	b.entries = nil
 }
 
-// fire is called by the timer goroutine when a debounce window expires.
-// The expected parameter lets stale goroutines (from a replaced timer)
-// detect that their entry has been superseded and exit without firing.
+// fire is called by the timer goroutine (from time.AfterFunc) when a
+// debounce window expires. The expected parameter is the *entry that was
+// current when the timer was created — if a newer Push replaced the entry,
+// pointer identity (e != expected) detects the stale goroutine and it
+// exits without firing. This avoids a race where Stop() returns false on
+// an already-fired timer, and both the old and new timers would fire.
 func (b *Buffer) fire(key Key, expected *entry) {
 	b.mu.Lock()
 	e, ok := b.entries[key]

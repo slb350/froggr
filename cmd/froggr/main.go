@@ -20,8 +20,12 @@ import (
 )
 
 const (
-	defaultPort     = "8080"
-	debounceWindow  = 30 * time.Second
+	defaultPort = "8080"
+	// debounceWindow controls how long froggr waits after the last push before
+	// triggering a review. 30 seconds collapses rapid pushes into one review.
+	debounceWindow = 30 * time.Second
+	// shutdownTimeout is the maximum time to wait for in-flight HTTP requests
+	// to complete during graceful shutdown.
 	shutdownTimeout = 10 * time.Second
 )
 
@@ -82,7 +86,7 @@ func main() {
 
 	logger.Info("starting froggr", "port", port)
 	listenErr := httpSrv.ListenAndServe()
-	stop()
+	stop() // Release signal handler resources.
 	if listenErr != nil && !errors.Is(listenErr, http.ErrServerClosed) {
 		logger.Error("server failed", "error", listenErr)
 		os.Exit(1)

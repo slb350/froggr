@@ -16,6 +16,10 @@ import (
 
 const froggrConfigPath = ".froggr.yml"
 
+// reviewTimeout bounds each AI review call so a stalled upstream (OpenRouter
+// or GitHub) cannot block the handler goroutine indefinitely. The underlying
+// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter),
+// so this acts as an outer safety net.
 const reviewTimeout = 3 * time.Minute
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
@@ -26,7 +30,10 @@ type ReviewRunner interface {
 	Review(ctx context.Context, gh review.GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error
 }
 
-// issueRef identifies an issue in a specific repository.
+// issueRef identifies an issue in a specific repository, used as the key in
+// the issueBranches reverse-lookup map. When HandleIssuesClosed is called, we
+// need to find the debounce.Key (which contains the branch name) from just the
+// issue number — this mapping provides that reverse lookup.
 type issueRef struct {
 	owner string
 	repo  string

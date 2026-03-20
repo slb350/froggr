@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/google/go-github/v84/github"
@@ -31,6 +32,8 @@ type mockGitHub struct {
 	draftPRErr     error
 	draftPRNumber  int
 	draftPRURL     string
+
+	mu             sync.Mutex
 	requestedFiles []string
 }
 
@@ -47,7 +50,10 @@ func (m *mockGitHub) GetBranchDiff(_ context.Context, _, _, _, _ string) ([]ghub
 }
 
 func (m *mockGitHub) GetFileContent(_ context.Context, _, _, path, _ string) (ghub.FileContent, error) {
+	m.mu.Lock()
 	m.requestedFiles = append(m.requestedFiles, path)
+	m.mu.Unlock()
+
 	if m.fileErr != nil {
 		return ghub.FileContent{}, m.fileErr
 	}

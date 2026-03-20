@@ -15,7 +15,9 @@ import (
 const (
 	defaultEndpoint    = "https://openrouter.ai/api/v1/chat/completions"
 	defaultHTTPTimeout = 120 * time.Second
-	maxResponseBytes   = 2 * 1024 * 1024 // 2 MB
+	// maxResponseBytes prevents a runaway response from exhausting memory.
+	// 2 MB is well above any reasonable code review response.
+	maxResponseBytes = 2 * 1024 * 1024
 )
 
 // Client is a minimal OpenRouter chat completion client.
@@ -71,8 +73,11 @@ type apiError struct {
 }
 
 // apiErrorCode handles error codes that may be strings or numbers.
+// OpenRouter aggregates many providers, and the error code format varies —
+// some return numeric HTTP codes, others return string identifiers.
 type apiErrorCode string
 
+// UnmarshalJSON accepts both string ("rate_limited") and numeric (429) codes.
 func (c *apiErrorCode) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || bytes.Equal(data, []byte("null")) {

@@ -9,6 +9,9 @@ import (
 	"github.com/google/go-github/v84/github"
 )
 
+// githubCompareFileLimit is the maximum number of files GitHub's compare API
+// returns. Beyond this, changed files are silently omitted from the response.
+// See: https://docs.github.com/en/rest/commits/commits#compare-two-commits
 const githubCompareFileLimit = 300
 
 // ErrComparisonTooLarge indicates the comparison has reached GitHub's 300-file
@@ -112,6 +115,10 @@ func (c *Client) GetFileContent(ctx context.Context, owner, repo, path, ref stri
 	if err != nil {
 		return FileContent{}, fmt.Errorf("getting content for %s@%s: %w", path, ref, err)
 	}
+	// GetContents returns nil for the file content when the path is a directory.
+	if fc == nil {
+		return FileContent{}, fmt.Errorf("path %s is a directory, not a file", path)
+	}
 
 	content, err := fc.GetContent()
 	if err != nil {
@@ -135,6 +142,9 @@ func (c *Client) CreateIssueComment(ctx context.Context, owner, repo string, num
 }
 
 // CreateDraftPR creates a draft pull request. Returns the PR number and URL.
+// If a PR already exists for the same head→base pair (common when froggr
+// re-reviews a branch that was already marked clean), it returns the existing
+// PR's details instead of failing. This makes the operation idempotent.
 func (c *Client) CreateDraftPR(ctx context.Context, owner, repo, title, body, head, base string) (int, string, error) {
 	pr := &github.NewPullRequest{
 		Title: github.Ptr(title),
@@ -166,6 +176,8 @@ func (c *Client) CreateDraftPR(ctx context.Context, owner, repo, title, body, he
 	return created.GetNumber(), created.GetHTMLURL(), nil
 }
 
+// isAlreadyExistsPRError detects GitHub's 422 "already exists" error, which
+// can appear as an error code or in the message text depending on API version.
 func isAlreadyExistsPRError(err error) bool {
 	var ghErr *github.ErrorResponse
 	if !errors.As(err, &ghErr) || ghErr.Response == nil || ghErr.Response.StatusCode != 422 {
@@ -184,6 +196,8 @@ func isAlreadyExistsPRError(err error) bool {
 	return strings.Contains(strings.ToLower(ghErr.Message), "already exists")
 }
 
+// findExistingPullRequest looks up an open PR matching head→base. Only called
+// after CreateDraftPR fails with "already exists" to recover the PR details.
 func (c *Client) findExistingPullRequest(ctx context.Context, owner, repo, head, base string) (*github.PullRequest, error) {
 	opts := &github.PullRequestListOptions{
 		State: "open",

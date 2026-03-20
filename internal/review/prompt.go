@@ -159,13 +159,18 @@ func writePriorReviewSection(budget *promptBudget, rc Context) {
 	writeBudgetNote(budget, omitted, "prior review")
 }
 
+// promptBudget tracks remaining character capacity for a prompt under
+// construction. Write() accepts or rejects whole chunks atomically so we
+// never cut through markdown fences, headings, or code blocks mid-section.
 type promptBudget struct {
 	b         strings.Builder
 	remaining int
 }
 
 func newPromptBudget(limit int) *promptBudget {
-	return &promptBudget{remaining: limit}
+	p := &promptBudget{remaining: limit}
+	p.b.Grow(limit)
+	return p
 }
 
 // Write only appends full chunks so we never cut through markdown fences or
@@ -183,6 +188,8 @@ func (p *promptBudget) String() string {
 	return p.b.String()
 }
 
+// truncateForPrompt trims s to fit in limit characters, appending a
+// truncation note so the model knows content was cut.
 func truncateForPrompt(s string, limit int) string {
 	if len(s) <= limit {
 		return s
@@ -196,6 +203,9 @@ func truncateForPrompt(s string, limit int) string {
 	return s[:keep] + promptTruncationNote
 }
 
+// writeBudgetNote appends an italicized context note to the prompt when
+// items were omitted due to budget constraints, so the model knows context
+// is incomplete.
 func writeBudgetNote(budget *promptBudget, omitted int, label string) {
 	if omitted <= 0 {
 		return

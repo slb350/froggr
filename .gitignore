@@ -30,7 +30,7 @@ Temporary Items
 
 # === Build ===
 bin/
-froggr
+/froggr
 
 # === Go ===
 *.exe

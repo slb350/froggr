@@ -27,9 +27,15 @@ var textFindingPattern = regexp.MustCompile(
 	`\*\*(Bug|Concern)\*\*\s+in\s+(\S+)\s+line\s+(\d+):\s*(.+)`,
 )
 
-// ParseResponse parses an AI response into a Result.
-// It tries JSON first (bare or markdown-fenced), then falls back
-// to text pattern matching.
+// ParseResponse parses an AI response into a structured Result using a
+// three-tier strategy:
+//  1. Bare JSON array — the model returned a clean JSON findings array
+//  2. Fenced JSON — the model wrapped JSON in a markdown code block
+//  3. Text patterns — fall back to regex matching "**Bug** in file line N: desc"
+//
+// An empty JSON array [] is the only way to signal "no findings" (clean).
+// If none of the tiers match, the response is rejected as invalid rather
+// than treated as clean — froggr fails closed on ambiguous AI output.
 func ParseResponse(response string) (Result, error) {
 	response = strings.TrimSpace(response)
 	if response == "" {
@@ -61,6 +67,8 @@ func ParseResponse(response string) (Result, error) {
 	return Result{}, fmt.Errorf("%w: expected JSON findings array or recognized fallback format", ErrInvalidAIResponse)
 }
 
+// errNotJSON is an internal sentinel used to distinguish "not JSON at all"
+// (try the next tier) from "is JSON but invalid" (fail immediately).
 var errNotJSON = errors.New("response is not a JSON array")
 
 // tryParseJSON attempts to parse the response as a JSON array of findings.
