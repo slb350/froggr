@@ -55,7 +55,7 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 - `anthropic/claude-opus-4.6` — best quality, higher cost
 - `openai/gpt-5.3-codex` — purpose-built for code
 - `google/gemini-3.1-pro-preview` — large context, strong reasoning
-- `qwen/qwen3-coder` — code-specialized, competitive quality
+- `qwen/qwen3.5-397b-a17b` — massive 397B MoE, top-tier reasoning
 - `minimax/minimax-m2.7` — fast, strong general reasoning
 
 ## Self-Hosting
