@@ -120,6 +120,17 @@ Server-side state (in-memory only):
 | Prior froggr comments | What was already flagged, what's been resolved |
 | `.froggr.yml` ignore paths | What to skip |
 
+froggr does not send an unbounded prompt. For speed and safety, review context
+is budgeted before it reaches the model:
+
+- At most 25 changed files are fetched for full review context
+- At most the 5 most recent froggr reviews are included
+- Large issue bodies, patches, file contents, and prior reviews are truncated
+- The final prompt has a hard size cap, and omissions are called out explicitly
+
+This keeps review latency and cost predictable and avoids depending on
+provider-side truncation, which is harder to reason about and easy to miss.
+
 ### Review Focus
 
 froggr focuses on things that matter:

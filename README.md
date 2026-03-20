@@ -122,6 +122,20 @@ internal/review/     → AI review engine (context → prompt → parse → form
 internal/server/     → HTTP server, webhook routing, event handler
 ```
 
+## Review Budgeting
+
+froggr keeps review context deliberately bounded so large pushes stay fast and
+predictable instead of timing out or relying on provider-side truncation.
+
+- It fetches at most 25 changed-file contexts per review
+- It includes at most the 5 most recent prior froggr reviews
+- It truncates oversized issue bodies, patches, file contents, and prior review text
+- It caps the final model prompt at a fixed size and tells the model when context was omitted
+
+This is an explicit tradeoff: on very large pushes, froggr prefers a smaller,
+stable review packet over an unbounded prompt that is slow, expensive, and
+more likely to fail formatting or be silently clipped upstream.
+
 See [docs/](./docs/) for detailed design decisions.
 
 ## License

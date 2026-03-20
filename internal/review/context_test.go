@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-github/v84/github"
@@ -30,6 +31,7 @@ type mockGitHub struct {
 	draftPRErr     error
 	draftPRNumber  int
 	draftPRURL     string
+	requestedFiles []string
 }
 
 func (m *mockGitHub) GetIssue(_ context.Context, _, _ string, _ int) (ghub.IssueInfo, error) {
@@ -45,6 +47,7 @@ func (m *mockGitHub) GetBranchDiff(_ context.Context, _, _, _, _ string) ([]ghub
 }
 
 func (m *mockGitHub) GetFileContent(_ context.Context, _, _, path, _ string) (ghub.FileContent, error) {
+	m.requestedFiles = append(m.requestedFiles, path)
 	if m.fileErr != nil {
 		return ghub.FileContent{}, m.fileErr
 	}
@@ -149,6 +152,61 @@ func TestBuildContext_FiltersPriorFroggrComments(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.PriorReviews, 1)
 	assert.Contains(t, rc.PriorReviews[0], "froggr: looks good")
+}
+
+func TestBuildContext_LimitsFetchedDiffFiles(t *testing.T) {
+	gh := &mockGitHub{
+		issue: ghub.IssueInfo{Number: 42, Title: "Large change", State: "open"},
+		files: map[string]ghub.FileContent{},
+	}
+
+	for i := 0; i < maxContextDiffFiles+3; i++ {
+		path := fmt.Sprintf("src/file-%02d.go", i)
+		gh.diffs = append(gh.diffs, ghub.FileDiff{
+			Path:   path,
+			Status: "modified",
+			Patch:  "+package main",
+		})
+		gh.files[path] = ghub.FileContent{Path: path, Content: "package main"}
+	}
+
+	push := ghub.PushContext{
+		Owner: "owner", Repo: "repo", Branch: "42-large",
+		HeadSHA: "abc123", DefaultBranch: "main",
+	}
+
+	rc, err := BuildContext(context.Background(), gh, push, 42, config.Defaults())
+	require.NoError(t, err)
+	assert.Len(t, rc.Diffs, maxContextDiffFiles)
+	assert.Len(t, rc.Files, maxContextDiffFiles)
+	assert.Equal(t, 3, rc.OmittedDiffs)
+	assert.Len(t, gh.requestedFiles, maxContextDiffFiles)
+}
+
+func TestBuildContext_UsesLatestPriorReviews(t *testing.T) {
+	gh := &mockGitHub{
+		issue: ghub.IssueInfo{Number: 42, Title: "History", State: "open"},
+		diffs: []ghub.FileDiff{},
+	}
+
+	for i := 0; i < maxContextPriorReviews+2; i++ {
+		gh.comments = append(gh.comments, &github.IssueComment{
+			Body: github.Ptr(fmt.Sprintf("froggr review %d", i+1)),
+			User: &github.User{Login: github.Ptr("froggr[bot]"), Type: github.Ptr("Bot")},
+		})
+	}
+
+	push := ghub.PushContext{
+		Owner: "owner", Repo: "repo", Branch: "42-history",
+		HeadSHA: "abc123", DefaultBranch: "main",
+	}
+
+	rc, err := BuildContext(context.Background(), gh, push, 42, config.Defaults())
+	require.NoError(t, err)
+	require.Len(t, rc.PriorReviews, maxContextPriorReviews)
+	assert.Equal(t, 2, rc.OmittedPriors)
+	assert.Equal(t, "froggr review 3", rc.PriorReviews[0])
+	assert.Equal(t, "froggr review 7", rc.PriorReviews[len(rc.PriorReviews)-1])
 }
 
 func TestBuildContext_IssueClosed(t *testing.T) {

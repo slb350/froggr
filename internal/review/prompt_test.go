@@ -1,6 +1,7 @@
 package review
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/slb350/froggr/internal/ghub"
@@ -77,4 +78,36 @@ func TestUserPrompt_HandlesMissingPriors(t *testing.T) {
 	prompt := UserPrompt(rc)
 	// Should not contain a prior reviews section.
 	assert.NotContains(t, prompt, "Prior Review")
+}
+
+func TestUserPrompt_AppliesBudgetAndNotesOmissions(t *testing.T) {
+	rc := Context{
+		Issue: ghub.IssueInfo{
+			Number: 1,
+			Title:  "Large review",
+			Body:   strings.Repeat("issue body ", 600),
+		},
+		Diffs: []ghub.FileDiff{
+			{
+				Path:   "src/large.go",
+				Status: "modified",
+				Patch:  strings.Repeat("+line\n", 3000),
+			},
+		},
+		Files: []ghub.FileContent{
+			{
+				Path:    "src/large.go",
+				Content: strings.Repeat("package main\n", 3000),
+			},
+		},
+		PriorReviews:  []string{strings.Repeat("prior review\n", 600)},
+		OmittedDiffs:  2,
+		OmittedPriors: 1,
+	}
+
+	prompt := UserPrompt(rc)
+	assert.LessOrEqual(t, len(prompt), maxPromptChars)
+	assert.Contains(t, prompt, "truncated to stay within froggr review budget")
+	assert.Contains(t, prompt, "omitted 2 additional diff file(s)")
+	assert.Contains(t, prompt, "omitted 1 additional prior review(s)")
 }
