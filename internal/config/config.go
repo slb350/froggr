@@ -22,10 +22,13 @@ const (
 // Defaults() call (which runs on each push when .froggr.yml is missing).
 var defaultBranchPatternRE = regexp.MustCompile(defaultBranchPattern)
 
+// Provider identifies an AI provider.
+type Provider string
+
 // Valid provider names.
 const (
-	ProviderOpenRouter = "openrouter"
-	ProviderBedrock    = "bedrock"
+	ProviderOpenRouter Provider = "openrouter"
+	ProviderBedrock    Provider = "bedrock"
 )
 
 // Config holds the parsed .froggr.yml configuration for a repository.
@@ -33,8 +36,8 @@ type Config struct {
 	BranchPattern *regexp.Regexp
 	AutoDraftPR   bool
 	IgnorePaths   []string
-	Model         string
-	Provider      string
+	Model    string
+	Provider Provider
 }
 
 // rawConfig is the YAML-deserialized form before validation.
@@ -117,12 +120,13 @@ func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
 
 // resolveProvider determines the provider from explicit config, model ID
 // auto-detection, or the default. Explicit provider takes precedence.
-func resolveProvider(rawProvider, model, defaultProvider string) (string, error) {
+func resolveProvider(rawProvider, model string, defaultProvider Provider) (Provider, error) {
 	if rawProvider != "" {
-		if rawProvider != ProviderOpenRouter && rawProvider != ProviderBedrock {
+		p := Provider(rawProvider)
+		if p != ProviderOpenRouter && p != ProviderBedrock {
 			return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
 		}
-		return rawProvider, nil
+		return p, nil
 	}
 	if model != "" {
 		return detectProvider(model)
@@ -137,7 +141,7 @@ func resolveProvider(rawProvider, model, defaultProvider string) (string, error)
 // OpenRouter because the slash check takes precedence.
 // Ambiguous model IDs (no slash and no dot) return an error — set provider
 // explicitly in .froggr.yml.
-func detectProvider(model string) (string, error) {
+func detectProvider(model string) (Provider, error) {
 	if strings.Contains(model, "/") {
 		return ProviderOpenRouter, nil
 	}

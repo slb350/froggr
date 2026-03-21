@@ -120,8 +120,8 @@ func envOr(key, fallback string) string {
 // buildProviders creates AI clients from available environment variables.
 // Returns an empty map if no providers are configured; the caller must
 // enforce the minimum.
-func buildProviders(logger *slog.Logger) map[string]review.AIClient {
-	providers := make(map[string]review.AIClient)
+func buildProviders(logger *slog.Logger) map[config.Provider]review.AIClient {
+	providers := make(map[config.Provider]review.AIClient)
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
 		client, err := openrouter.NewClient(key)

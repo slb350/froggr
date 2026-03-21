@@ -13,21 +13,21 @@ import (
 // Engine orchestrates the full review flow: build context, prompt AI,
 // parse response, format comment, post to GitHub, and optionally open a PR.
 type Engine struct {
-	providers map[string]AIClient
+	providers map[config.Provider]AIClient
 }
 
 // NewEngine creates a review Engine with the given AI providers.
-// The map keys are provider names ("openrouter", "bedrock") matching
-// the Config.Provider field. The map is copied to prevent callers from
+// The map keys are provider names (config.ProviderOpenRouter, config.ProviderBedrock)
+// matching the Config.Provider field. The map is copied to prevent callers from
 // mutating the engine's state. Panics if providers is empty or contains nil values.
-func NewEngine(providers map[string]AIClient) *Engine {
+func NewEngine(providers map[config.Provider]AIClient) *Engine {
 	if len(providers) == 0 {
 		panic("review.NewEngine: at least one AI provider is required")
 	}
-	copied := make(map[string]AIClient, len(providers))
+	copied := make(map[config.Provider]AIClient, len(providers))
 	for k, v := range providers {
 		if v == nil {
-			panic("review.NewEngine: nil provider for key " + k)
+			panic("review.NewEngine: nil provider for key " + string(k))
 		}
 		copied[k] = v
 	}
@@ -73,26 +73,19 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 
 // runAIReview builds the prompt, calls the AI, and parses the response.
 // The caller (Review) must verify that the provider exists before calling.
-func (e *Engine) runAIReview(ctx context.Context, rc Context, provider, model string) (Result, error) {
-	client := e.providers[provider]
-
+func (e *Engine) runAIReview(ctx context.Context, rc Context, provider config.Provider, model string) (Result, error) {
 	userPrompt, err := UserPrompt(rc)
 	if err != nil {
 		return Result{}, fmt.Errorf("building prompt: %w", err)
 	}
 
-	req := ai.CompletionRequest{
+	aiResponse, err := e.providers[provider].Complete(ctx, ai.CompletionRequest{
 		Model: model,
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: SystemPrompt()},
 			{Role: ai.RoleUser, Content: userPrompt},
 		},
-	}
-	if verr := req.Validate(); verr != nil {
-		return Result{}, fmt.Errorf("invalid completion request: %w", verr)
-	}
-
-	aiResponse, err := client.Complete(ctx, req)
+	})
 	if err != nil {
 		return Result{}, fmt.Errorf("AI review: %w", err)
 	}
