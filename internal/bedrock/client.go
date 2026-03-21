@@ -109,7 +109,7 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 			continue
 		}
 		messages = append(messages, types.Message{
-			Role: types.ConversationRole(string(m.Role)),
+			Role: types.ConversationRole(m.Role),
 			Content: []types.ContentBlock{
 				&types.ContentBlockMemberText{Value: m.Content},
 			},
