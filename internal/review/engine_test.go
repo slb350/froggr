@@ -269,6 +269,12 @@ func TestNewEngine_PanicsOnEmptyProviders(t *testing.T) {
 	})
 }
 
+func TestNewEngine_PanicsOnNilMap(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: at least one AI provider is required", func() {
+		NewEngine(nil)
+	})
+}
+
 func TestNewEngine_PanicsOnNilProvider(t *testing.T) {
 	assert.Panics(t, func() {
 		NewEngine(map[string]AIClient{config.ProviderOpenRouter: nil})

@@ -271,6 +271,16 @@ func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
+func TestParse_SlashAndDot_PrefersOpenRouter(t *testing.T) {
+	// Model ID with both slash and dot: slash takes precedence per detectProvider.
+	input := []byte(`
+model: custom-provider/model-v2.0
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
 func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {
 	input := []byte(`
 model: gpt-4o

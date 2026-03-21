@@ -72,12 +72,9 @@ func Parse(content []byte) (Config, error) {
 	}
 
 	if raw.BranchPattern != "" {
-		re, err := regexp.Compile(raw.BranchPattern)
+		re, err := compileBranchPattern(raw.BranchPattern)
 		if err != nil {
-			return Config{}, fmt.Errorf("invalid branch_pattern %q: %w", raw.BranchPattern, err)
-		}
-		if re.NumSubexp() < 1 {
-			return Config{}, fmt.Errorf("branch_pattern %q must have at least one capture group for the issue number", raw.BranchPattern)
+			return Config{}, err
 		}
 		cfg.BranchPattern = re
 	}
@@ -97,20 +94,40 @@ func Parse(content []byte) (Config, error) {
 		cfg.Model = raw.Model
 	}
 
-	if raw.Provider != "" {
-		if raw.Provider != ProviderOpenRouter && raw.Provider != ProviderBedrock {
-			return Config{}, fmt.Errorf("invalid provider %q: must be %q or %q", raw.Provider, ProviderOpenRouter, ProviderBedrock)
-		}
-		cfg.Provider = raw.Provider
-	} else if raw.Model != "" {
-		detected, err := detectProvider(cfg.Model)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Provider = detected
+	provider, err := resolveProvider(raw.Provider, raw.Model, cfg.Provider)
+	if err != nil {
+		return Config{}, err
 	}
+	cfg.Provider = provider
 
 	return cfg, nil
+}
+
+// compileBranchPattern validates and compiles a branch pattern regex.
+func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid branch_pattern %q: %w", pattern, err)
+	}
+	if re.NumSubexp() < 1 {
+		return nil, fmt.Errorf("branch_pattern %q must have at least one capture group for the issue number", pattern)
+	}
+	return re, nil
+}
+
+// resolveProvider determines the provider from explicit config, model ID
+// auto-detection, or the default. Explicit provider takes precedence.
+func resolveProvider(rawProvider, model, defaultProvider string) (string, error) {
+	if rawProvider != "" {
+		if rawProvider != ProviderOpenRouter && rawProvider != ProviderBedrock {
+			return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
+		}
+		return rawProvider, nil
+	}
+	if model != "" {
+		return detectProvider(model)
+	}
+	return defaultProvider, nil
 }
 
 // detectProvider infers the AI provider from the model ID format.

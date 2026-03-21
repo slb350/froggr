@@ -20,7 +20,7 @@ type mockConverseAPI struct {
 	input  *bedrockruntime.ConverseInput // captured for assertions
 }
 
-func (m *mockConverseAPI) Converse(ctx context.Context, input *bedrockruntime.ConverseInput, _ ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
+func (m *mockConverseAPI) Converse(_ context.Context, input *bedrockruntime.ConverseInput, _ ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error) {
 	m.input = input
 	return m.output, m.err
 }
@@ -96,7 +96,7 @@ func TestComplete_EmptyResponse(t *testing.T) {
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no text content")
+	assert.Contains(t, err.Error(), "no text content in response")
 }
 
 func TestComplete_ErrorPropagation(t *testing.T) {
@@ -178,6 +178,18 @@ func TestComplete_UnexpectedOutputType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unexpected output type")
 }
 
+func TestComplete_NilResponse(t *testing.T) {
+	mock := &mockConverseAPI{output: nil}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil response")
+}
+
 func TestComplete_BedrockErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -187,7 +199,7 @@ func TestComplete_BedrockErrors(t *testing.T) {
 		{
 			"throttling",
 			&types.ThrottlingException{Message: aws.String("rate limit exceeded")},
-			[]string{"rate limit", "Bedrock"},
+			[]string{"rate limit", "bedrock"},
 		},
 		{
 			"validation",
@@ -212,7 +224,7 @@ func TestComplete_BedrockErrors(t *testing.T) {
 		{
 			"quota_exceeded",
 			&types.ServiceQuotaExceededException{Message: aws.String("quota exceeded")},
-			[]string{"quota exceeded", "Bedrock"},
+			[]string{"quota exceeded", "bedrock"},
 		},
 		{
 			"model_error",
@@ -242,7 +254,7 @@ func TestComplete_BedrockErrors(t *testing.T) {
 		{
 			"generic",
 			fmt.Errorf("unknown API error"),
-			[]string{"Bedrock Converse", "unknown API error"},
+			[]string{"bedrock converse", "unknown API error"},
 		},
 	}
 	for _, tt := range tests {
@@ -321,7 +333,7 @@ func TestComplete_WhitespaceOnlyContent(t *testing.T) {
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no text content")
+	assert.Contains(t, err.Error(), "no text content in response")
 }
 
 func TestComplete_EmptyModel(t *testing.T) {
@@ -419,6 +431,12 @@ func TestComplete_NonTextContentBlock(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected content block type")
 	assert.Contains(t, err.Error(), "text-only responses")
+}
+
+func TestNewClientWithAPI_NilPanics(t *testing.T) {
+	assert.PanicsWithValue(t, "bedrock.newClientWithAPI: nil api", func() {
+		newClientWithAPI(nil)
+	})
 }
 
 func TestNewClient_EmptyRegion(t *testing.T) {

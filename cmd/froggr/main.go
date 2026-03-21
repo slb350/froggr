@@ -29,6 +29,9 @@ const (
 	// shutdownTimeout is the maximum time to wait for in-flight HTTP requests
 	// to complete during graceful shutdown.
 	shutdownTimeout = 10 * time.Second
+	// providerInitTimeout bounds AWS credential chain discovery so startup
+	// doesn't hang when IMDS is unreachable (e.g. running locally).
+	providerInitTimeout = 15 * time.Second
 )
 
 func main() {
@@ -131,7 +134,10 @@ func buildProviders(logger *slog.Logger) map[string]review.AIClient {
 	}
 
 	if region := awsRegion(); region != "" {
-		client, err := bedrock.NewClient(context.Background(), region)
+		logger.Info("initializing Bedrock client", "region", region)
+		initCtx, initCancel := context.WithTimeout(context.Background(), providerInitTimeout)
+		client, err := bedrock.NewClient(initCtx, region)
+		initCancel()
 		if err != nil {
 			logger.Error("failed to initialize Bedrock client", "error", err)
 			os.Exit(1)

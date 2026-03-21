@@ -3,11 +3,18 @@
 // review engine to work with any provider without importing provider packages.
 package ai
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
+
+// DefaultHTTPTimeout is the HTTP client timeout shared by all AI provider clients.
+const DefaultHTTPTimeout = 120 * time.Second
 
 // Role identifies the sender of a chat message.
 type Role string
 
+// Standard chat message roles.
 const (
 	RoleSystem    Role = "system"
 	RoleUser      Role = "user"

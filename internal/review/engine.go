@@ -81,13 +81,18 @@ func (e *Engine) runAIReview(ctx context.Context, rc Context, provider, model st
 		return Result{}, fmt.Errorf("building prompt: %w", err)
 	}
 
-	aiResponse, err := client.Complete(ctx, ai.CompletionRequest{
+	req := ai.CompletionRequest{
 		Model: model,
 		Messages: []ai.Message{
 			{Role: ai.RoleSystem, Content: SystemPrompt()},
 			{Role: ai.RoleUser, Content: userPrompt},
 		},
-	})
+	}
+	if verr := req.Validate(); verr != nil {
+		return Result{}, fmt.Errorf("invalid completion request: %w", verr)
+	}
+
+	aiResponse, err := client.Complete(ctx, req)
 	if err != nil {
 		return Result{}, fmt.Errorf("AI review: %w", err)
 	}

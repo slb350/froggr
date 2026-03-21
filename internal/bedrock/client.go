@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -28,9 +29,12 @@ type Client struct {
 // NewClient creates a Bedrock client using the default AWS credential chain.
 func NewClient(ctx context.Context, region string) (*Client, error) {
 	if region == "" {
-		return nil, fmt.Errorf("Bedrock: region is required")
+		return nil, fmt.Errorf("bedrock: region is required")
 	}
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
+		awsconfig.WithRegion(region),
+		awsconfig.WithHTTPClient(&http.Client{Timeout: ai.DefaultHTTPTimeout}),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("loading AWS config: %w", err)
 	}
@@ -39,13 +43,16 @@ func NewClient(ctx context.Context, region string) (*Client, error) {
 
 // newClientWithAPI creates a Client with a custom API implementation (for testing).
 func newClientWithAPI(api converseAPI) *Client {
+	if api == nil {
+		panic("bedrock.newClientWithAPI: nil api")
+	}
 	return &Client{api: api}
 }
 
 // Complete sends a chat completion request via the Bedrock Converse API.
 func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
 	if err := req.Validate(); err != nil {
-		return "", fmt.Errorf("Bedrock: %w", err)
+		return "", fmt.Errorf("bedrock: %w", err)
 	}
 
 	system, messages := splitMessages(req.Messages)
@@ -61,6 +68,9 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 	resp, err := c.api.Converse(ctx, input)
 	if err != nil {
 		return "", formatError(err)
+	}
+	if resp == nil {
+		return "", fmt.Errorf("bedrock: received nil response from converse API")
 	}
 
 	if err := checkStopReason(resp.StopReason); err != nil {
@@ -79,11 +89,11 @@ func checkStopReason(reason types.StopReason) error {
 	case types.StopReasonEndTurn, types.StopReasonStopSequence:
 		return nil
 	case types.StopReasonMaxTokens:
-		return fmt.Errorf("Bedrock: response truncated (max_tokens reached)")
+		return fmt.Errorf("bedrock: response truncated (max_tokens reached)")
 	case types.StopReasonGuardrailIntervened, types.StopReasonContentFiltered:
-		return fmt.Errorf("Bedrock: response blocked by content filter (stop_reason=%s)", reason)
+		return fmt.Errorf("bedrock: response blocked by content filter (stop_reason=%s)", reason)
 	default:
-		return fmt.Errorf("Bedrock: unexpected stop reason %q", reason)
+		return fmt.Errorf("bedrock: unexpected stop reason %q", reason)
 	}
 }
 
@@ -109,65 +119,39 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 	return system, messages
 }
 
+// isErrType returns true if err's chain contains an error of type T.
+func isErrType[T error](err error) bool {
+	var target T
+	return errors.As(err, &target)
+}
+
+// bedrockErrors maps known Bedrock API exceptions to operator-friendly prefixes.
+var bedrockErrors = []struct {
+	match  func(error) bool
+	prefix string
+}{
+	{isErrType[*types.ThrottlingException], "bedrock rate limit"},
+	{isErrType[*types.ValidationException], "bedrock validation"},
+	{isErrType[*types.AccessDeniedException], "bedrock access denied"},
+	{isErrType[*types.ModelNotReadyException], "bedrock model not ready"},
+	{isErrType[*types.ResourceNotFoundException], "bedrock model not found (check model ID and region)"},
+	{isErrType[*types.ServiceQuotaExceededException], "bedrock service quota exceeded (request a quota increase)"},
+	{isErrType[*types.ModelErrorException], "bedrock model error (may be transient, retry)"},
+	{isErrType[*types.InternalServerException], "bedrock internal server error (may be transient, retry)"},
+	{isErrType[*types.ModelTimeoutException], "bedrock model timeout (prompt may be too large, or retry)"},
+	{isErrType[*types.ServiceUnavailableException], "bedrock service unavailable (may be transient, retry)"},
+	{isErrType[*types.ConflictException], "bedrock conflict"},
+}
+
 // formatError wraps known Bedrock API error types with operator-friendly messages.
-// Unknown errors receive a generic "Bedrock Converse" prefix.
+// Unknown errors receive a generic "bedrock converse" prefix.
 func formatError(err error) error {
-	var throttle *types.ThrottlingException
-	if errors.As(err, &throttle) {
-		return fmt.Errorf("Bedrock rate limit: %w", err)
+	for _, m := range bedrockErrors {
+		if m.match(err) {
+			return fmt.Errorf("%s: %w", m.prefix, err)
+		}
 	}
-
-	var validation *types.ValidationException
-	if errors.As(err, &validation) {
-		return fmt.Errorf("Bedrock validation: %w", err)
-	}
-
-	var access *types.AccessDeniedException
-	if errors.As(err, &access) {
-		return fmt.Errorf("Bedrock access denied: %w", err)
-	}
-
-	var notReady *types.ModelNotReadyException
-	if errors.As(err, &notReady) {
-		return fmt.Errorf("Bedrock model not ready: %w", err)
-	}
-
-	var notFound *types.ResourceNotFoundException
-	if errors.As(err, &notFound) {
-		return fmt.Errorf("Bedrock model not found (check model ID and region): %w", err)
-	}
-
-	var quotaExceeded *types.ServiceQuotaExceededException
-	if errors.As(err, &quotaExceeded) {
-		return fmt.Errorf("Bedrock service quota exceeded (request a quota increase): %w", err)
-	}
-
-	var modelErr *types.ModelErrorException
-	if errors.As(err, &modelErr) {
-		return fmt.Errorf("Bedrock model error (may be transient, retry): %w", err)
-	}
-
-	var internalErr *types.InternalServerException
-	if errors.As(err, &internalErr) {
-		return fmt.Errorf("Bedrock internal server error (may be transient, retry): %w", err)
-	}
-
-	var timeout *types.ModelTimeoutException
-	if errors.As(err, &timeout) {
-		return fmt.Errorf("Bedrock model timeout (prompt may be too large, or retry): %w", err)
-	}
-
-	var unavailable *types.ServiceUnavailableException
-	if errors.As(err, &unavailable) {
-		return fmt.Errorf("Bedrock service unavailable (may be transient, retry): %w", err)
-	}
-
-	var conflict *types.ConflictException
-	if errors.As(err, &conflict) {
-		return fmt.Errorf("Bedrock conflict: %w", err)
-	}
-
-	return fmt.Errorf("Bedrock Converse: %w", err)
+	return fmt.Errorf("bedrock converse: %w", err)
 }
 
 // extractText pulls the assistant's text from the Converse response.
@@ -178,14 +162,14 @@ func formatError(err error) error {
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 	msg, ok := resp.Output.(*types.ConverseOutputMemberMessage)
 	if !ok {
-		return "", fmt.Errorf("Bedrock: unexpected output type %T", resp.Output)
+		return "", fmt.Errorf("bedrock: unexpected output type %T", resp.Output)
 	}
 
 	var parts []string
 	for _, block := range msg.Value.Content {
 		text, ok := block.(*types.ContentBlockMemberText)
 		if !ok {
-			return "", fmt.Errorf("Bedrock: unexpected content block type %T (froggr expects text-only responses)", block)
+			return "", fmt.Errorf("bedrock: unexpected content block type %T (froggr expects text-only responses)", block)
 		}
 		if s := strings.TrimSpace(text.Value); s != "" {
 			parts = append(parts, s)
@@ -193,7 +177,7 @@ func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 	}
 
 	if len(parts) == 0 {
-		return "", fmt.Errorf("Bedrock: no text content in response")
+		return "", fmt.Errorf("bedrock: no text content in response")
 	}
 	return strings.Join(parts, "\n"), nil
 }

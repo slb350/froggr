@@ -9,14 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/slb350/froggr/internal/ai"
 )
 
 const (
-	defaultEndpoint    = "https://openrouter.ai/api/v1/chat/completions"
-	defaultHTTPTimeout = 120 * time.Second
+	defaultEndpoint = "https://openrouter.ai/api/v1/chat/completions"
 	// maxResponseBytes prevents a runaway response from exhausting memory.
 	// 2 MB is well above any reasonable code review response.
 	maxResponseBytes = 2 * 1024 * 1024
@@ -37,7 +35,7 @@ func NewClient(apiKey string) (*Client, error) {
 	return &Client{
 		apiKey:     apiKey,
 		endpoint:   defaultEndpoint,
-		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
+		httpClient: &http.Client{Timeout: ai.DefaultHTTPTimeout},
 	}, nil
 }
 

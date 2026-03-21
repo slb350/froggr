@@ -20,7 +20,8 @@ type GitHubClient interface {
 }
 
 // AIClient defines the AI completion operation needed by the review engine.
-// Implementations must call req.Validate() before making API calls.
+// The engine validates the request before calling Complete; implementations
+// may validate defensively but are not required to.
 type AIClient interface {
 	Complete(ctx context.Context, req ai.CompletionRequest) (string, error)
 }
