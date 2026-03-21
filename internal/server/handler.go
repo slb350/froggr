@@ -22,6 +22,11 @@ const froggrConfigPath = ".froggr.yml"
 // outer safety net.
 const reviewTimeout = 3 * time.Minute
 
+// failureCommentTimeout bounds how long we wait to post a "review failed"
+// comment after a review error. Uses h.ctx (not the expired reviewCtx) so
+// it works even when the review timed out — the most important case.
+const failureCommentTimeout = 30 * time.Second
+
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
 type ClientFactory func(installationID int64) review.GitHubClient
 
@@ -163,8 +168,13 @@ func (h *Handler) onDebounce(_ debounce.Key, data any) {
 			"branch", pd.push.Branch,
 			"issue", pd.issueNum,
 		)
+		// Use h.ctx (not reviewCtx) so the comment post works even when the
+		// review timed out. If the handler is shutting down (h.ctx cancelled),
+		// the post fails gracefully — we're exiting anyway.
+		notifyCtx, notifyCancel := context.WithTimeout(h.ctx, failureCommentTimeout)
+		defer notifyCancel()
 		comment := review.FormatFailedComment(pd.push, err)
-		if postErr := pd.gh.CreateIssueComment(reviewCtx, pd.push.Owner, pd.push.Repo, pd.issueNum, comment); postErr != nil {
+		if postErr := pd.gh.CreateIssueComment(notifyCtx, pd.push.Owner, pd.push.Repo, pd.issueNum, comment); postErr != nil {
 			h.logger.Error("failed to post review failure comment", "error", postErr)
 		}
 	}

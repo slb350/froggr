@@ -117,21 +117,42 @@ func newTestHandler(gh *mockGHClient, eng ReviewRunner) *Handler {
 	return NewHandler(factory, eng, testDebounceWindow, testLogger())
 }
 
-func waitForReview(t *testing.T, eng *mockReviewer, timeout time.Duration) reviewCall {
+// pollUntil polls fn every 5ms until it returns a value and true, or the
+// timeout expires. Eliminates duplication across wait-for-X test helpers.
+func pollUntil[T any](t *testing.T, timeout time.Duration, msg string, fn func() (T, bool)) T {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
-		calls := eng.getCalls()
-		if len(calls) > 0 {
-			return calls[len(calls)-1]
+		if v, ok := fn(); ok {
+			return v
 		}
 		select {
 		case <-deadline:
-			t.Fatal("timed out waiting for review call")
-			return reviewCall{}
+			t.Fatal(msg)
+			var zero T
+			return zero
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+}
+
+func waitForReview(t *testing.T, eng *mockReviewer, timeout time.Duration) reviewCall {
+	t.Helper()
+	return pollUntil(t, timeout, "timed out waiting for review call", func() (reviewCall, bool) {
+		calls := eng.getCalls()
+		if len(calls) > 0 {
+			return calls[len(calls)-1], true
+		}
+		return reviewCall{}, false
+	})
+}
+
+func waitForComment(t *testing.T, gh *mockGHClient, timeout time.Duration) string {
+	t.Helper()
+	return pollUntil(t, timeout, "timed out waiting for comment to be posted", func() (string, bool) {
+		c := gh.getCommentPosted()
+		return c, c != ""
+	})
 }
 
 func noReview(t *testing.T, eng *mockReviewer, wait time.Duration) {
@@ -302,13 +323,33 @@ func TestHandler_ReviewFailure_PostsFailureComment(t *testing.T) {
 	h.HandlePush(context.Background(), testPush())
 
 	waitForReview(t, eng, 500*time.Millisecond)
-	// Give the failure comment post a moment to complete.
-	time.Sleep(50 * time.Millisecond)
 
-	comment := gh.getCommentPosted()
+	comment := waitForComment(t, gh, 500*time.Millisecond)
 	assert.Contains(t, comment, "Review failed")
 	assert.Contains(t, comment, "AI provider timeout")
 	assert.Contains(t, comment, "Push again to retry")
+}
+
+func TestHandler_ReviewFailure_CommentPostAlsoFails(t *testing.T) {
+	gh := &mockGHClient{
+		fileErr:        testutil.NotFoundError(),
+		commentPostErr: errors.New("GitHub API rate limited"),
+	}
+	eng := &mockReviewer{err: errors.New("AI provider timeout")}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	// The review will fail, then the failure comment post will also fail.
+	// The handler should not panic — it logs both errors and moves on.
+	waitForReview(t, eng, 500*time.Millisecond)
+
+	// The comment was attempted (mock records the body regardless of error).
+	// Verify the handler didn't panic and the comment was built correctly.
+	comment := waitForComment(t, gh, 500*time.Millisecond)
+	assert.Contains(t, comment, "Review failed")
+	assert.Contains(t, comment, "AI provider timeout")
 }
 
 type blockingReviewer struct {
