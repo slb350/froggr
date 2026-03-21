@@ -67,7 +67,8 @@ func main() {
 		os.Exit(1)
 	}
 	engine := review.NewEngine(providers)
-	handler := server.NewHandler(clientFactory, engine, debounceWindow, logger)
+	defaultConfig := config.DefaultsForProviders(configuredProviders(providers)...)
+	handler := server.NewHandler(clientFactory, engine, defaultConfig, debounceWindow, logger)
 	srv := server.NewServer(handler, []byte(webhookSecret), logger)
 
 	httpSrv := &http.Server{
@@ -157,4 +158,12 @@ func awsRegion() string {
 		return r
 	}
 	return os.Getenv("AWS_DEFAULT_REGION")
+}
+
+func configuredProviders(providers map[config.Provider]review.AIClient) []config.Provider {
+	keys := make([]config.Provider, 0, len(providers))
+	for provider := range providers {
+		keys = append(keys, provider)
+	}
+	return keys
 }

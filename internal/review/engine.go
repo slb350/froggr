@@ -48,7 +48,10 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 	rc, err := BuildContext(ctx, gh, push, issueNum, cfg)
 	if err != nil {
 		if errors.Is(err, ghub.ErrComparisonTooLarge) {
-			return postSkippedReviewComment(ctx, gh, push, issueNum)
+			return SuppressFailureComment(postSkippedReviewComment(ctx, gh, push, issueNum))
+		}
+		if errors.Is(err, errIssueClosed) {
+			return SuppressFailureComment(fmt.Errorf("building context: %w", err))
 		}
 		return fmt.Errorf("building context: %w", err)
 	}
@@ -68,7 +71,7 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 	}
 
 	if result.IsClean && cfg.AutoDraftPR {
-		return maybeCreateDraftPR(ctx, gh, push, rc.Issue.Title, issueNum)
+		return SuppressFailureComment(maybeCreateDraftPR(ctx, gh, push, rc.Issue.Title, issueNum))
 	}
 
 	return nil

@@ -47,7 +47,7 @@ func BuildContext(ctx context.Context, gh GitHubClient, push ghub.PushContext, i
 	}
 
 	if issue.State == "closed" {
-		return Context{}, fmt.Errorf("issue #%d is closed, skipping review", issueNum)
+		return Context{}, fmt.Errorf("%w: issue #%d is closed, skipping review", errIssueClosed, issueNum)
 	}
 
 	diffs, err := gh.GetBranchDiff(ctx, push.Owner, push.Repo, push.DefaultBranch, push.HeadSHA)

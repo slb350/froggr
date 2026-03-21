@@ -113,6 +113,26 @@ func TestExtractPushContext_TagPush(t *testing.T) {
 	assert.Contains(t, err.Error(), "tag")
 }
 
+func TestExtractPushContext_DeletedBranchPush(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "0000000000000000000000000000000000000000",
+		"deleted": true,
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deleted branch")
+}
+
 func TestExtractPushContext_DefaultBranch(t *testing.T) {
 	payload := []byte(`{
 		"ref": "refs/heads/main",

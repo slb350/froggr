@@ -37,12 +37,15 @@ func ValidateAndParse(r *http.Request, secret []byte) (string, any, error) {
 }
 
 // ExtractPushContext extracts the fields needed for review from a PushEvent.
-// Returns an error for tag pushes (refs/tags/).
+// Returns an error for tag pushes and deleted branches.
 func ExtractPushContext(event *github.PushEvent) (PushContext, error) {
 	ref := event.GetRef()
 
 	if strings.HasPrefix(ref, "refs/tags/") {
 		return PushContext{}, fmt.Errorf("ignoring tag push: %s", ref)
+	}
+	if event.GetDeleted() {
+		return PushContext{}, fmt.Errorf("ignoring deleted branch push: %s", ref)
 	}
 
 	branch := strings.TrimPrefix(ref, "refs/heads/")

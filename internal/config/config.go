@@ -14,8 +14,9 @@ import (
 const (
 	// defaultBranchPattern extracts issue numbers from branch names like
 	// "42-add-auth" → issue #42. The first capture group must be the number.
-	defaultBranchPattern = `^(\d+)-`
-	defaultModel         = "anthropic/claude-sonnet-4.6"
+	defaultBranchPattern   = `^(\d+)-`
+	defaultOpenRouterModel = "anthropic/claude-sonnet-4.6"
+	defaultBedrockModel    = "anthropic.claude-sonnet-4-6"
 )
 
 // defaultBranchPatternRE is compiled once to avoid re-compiling on every
@@ -51,29 +52,63 @@ type Config struct {
 
 // rawConfig is the YAML-deserialized form before validation.
 type rawConfig struct {
-	BranchPattern string   `yaml:"branch_pattern"`
-	AutoDraftPR   *bool    `yaml:"auto_draft_pr"`
-	IgnorePaths   []string `yaml:"ignore_paths"`
-	Model         string   `yaml:"model"`
-	Provider      string   `yaml:"provider"`
+	BranchPattern string    `yaml:"branch_pattern"`
+	AutoDraftPR   *bool     `yaml:"auto_draft_pr"`
+	IgnorePaths   *[]string `yaml:"ignore_paths"`
+	Model         string    `yaml:"model"`
+	Provider      string    `yaml:"provider"`
 }
 
 // Defaults returns a Config with sensible default values.
 func Defaults() Config {
+	return DefaultsForProvider(ProviderOpenRouter)
+}
+
+// DefaultsForProvider returns the built-in defaults for a specific provider.
+// OpenRouter remains the preferred default when multiple providers are
+// available, but Bedrock-only installs need a Bedrock-native model ID.
+func DefaultsForProvider(provider Provider) Config {
+	if !provider.Valid() {
+		provider = ProviderOpenRouter
+	}
+	model := defaultModelForProvider(provider)
 	return Config{
 		BranchPattern: defaultBranchPatternRE,
 		AutoDraftPR:   true,
-		IgnorePaths:   []string{"*.lock", "vendor/**", "generated/**"},
-		Model:         defaultModel,
-		Provider:      ProviderOpenRouter,
+		IgnorePaths:   []string{"*.lock", ".env*", "vendor/**", "generated/**"},
+		Model:         model,
+		Provider:      provider,
 	}
+}
+
+// DefaultsForProviders chooses repo defaults from the AI providers configured
+// on the server. OpenRouter keeps priority when present because it is the
+// documented default; Bedrock becomes the default only when it is the sole
+// configured provider.
+func DefaultsForProviders(providers ...Provider) Config {
+	priority := []Provider{ProviderOpenRouter, ProviderBedrock}
+	for _, preferred := range priority {
+		for _, p := range providers {
+			if p == preferred {
+				return DefaultsForProvider(preferred)
+			}
+		}
+	}
+	return Defaults()
 }
 
 // Parse reads YAML content and returns a validated Config. Missing fields are
 // filled from Defaults(). Empty or nil content returns Defaults().
 func Parse(content []byte) (Config, error) {
+	return ParseWithDefaults(content, Defaults())
+}
+
+// ParseWithDefaults reads YAML content and returns a validated Config merged
+// onto the provided defaults. This lets the server derive sensible defaults
+// from the AI providers it actually has configured.
+func ParseWithDefaults(content []byte, defaults Config) (Config, error) {
 	if len(content) == 0 {
-		return Defaults(), nil
+		return defaults, nil
 	}
 
 	var raw rawConfig
@@ -81,12 +116,13 @@ func Parse(content []byte) (Config, error) {
 		return Config{}, fmt.Errorf("parsing .froggr.yml: %w", err)
 	}
 
-	return applyOverrides(raw)
+	return applyOverrides(raw, defaults)
 }
 
-// applyOverrides merges raw YAML values onto Defaults(), validating each field.
-func applyOverrides(raw rawConfig) (Config, error) {
-	cfg := Defaults()
+// applyOverrides merges raw YAML values onto the provided defaults, validating
+// each field.
+func applyOverrides(raw rawConfig, defaults Config) (Config, error) {
+	cfg := defaults
 
 	if raw.BranchPattern != "" {
 		re, err := compileBranchPattern(raw.BranchPattern)
@@ -100,27 +136,19 @@ func applyOverrides(raw rawConfig) (Config, error) {
 		cfg.AutoDraftPR = *raw.AutoDraftPR
 	}
 
-	if len(raw.IgnorePaths) > 0 {
-		if err := validateIgnorePatterns(raw.IgnorePaths); err != nil {
+	if raw.IgnorePaths != nil {
+		if err := validateIgnorePatterns(*raw.IgnorePaths); err != nil {
 			return Config{}, err
 		}
-		cfg.IgnorePaths = raw.IgnorePaths
+		cfg.IgnorePaths = *raw.IgnorePaths
 	}
 
-	if raw.Model != "" {
-		cfg.Model = raw.Model
+	provider, model, err := resolveProviderAndModel(raw.Provider, raw.Model, defaults)
+	if err != nil {
+		return Config{}, err
 	}
-
-	if raw.Provider != "" || raw.Model != "" {
-		// Pass cfg.Model (not raw.Model) so that an explicit provider
-		// is validated against the effective model, which may be the
-		// default if raw.Model was empty.
-		provider, err := resolveProvider(raw.Provider, cfg.Model)
-		if err != nil {
-			return Config{}, err
-		}
-		cfg.Provider = provider
-	}
+	cfg.Provider = provider
+	cfg.Model = model
 
 	return cfg, nil
 }
@@ -137,27 +165,59 @@ func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-// resolveProvider determines the provider from explicit config or model ID
-// auto-detection. Explicit provider takes precedence. When an explicit
-// provider is set, the model must be compatible (Bedrock rejects
-// OpenRouter-format model IDs and vice versa at the API level, so we
-// catch the most common misconfiguration — Bedrock with the default
-// OpenRouter model — at parse time).
-func resolveProvider(rawProvider, model string) (Provider, error) {
-	if rawProvider != "" {
-		p := Provider(rawProvider)
-		if !p.Valid() {
-			return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
+// resolveProviderAndModel determines the effective provider and model from the
+// raw config and server-derived defaults.
+func resolveProviderAndModel(rawProvider, rawModel string, defaults Config) (Provider, string, error) {
+	switch {
+	case rawProvider == "" && rawModel == "":
+		return defaults.Provider, defaults.Model, nil
+	case rawProvider == "":
+		provider, err := detectProvider(rawModel)
+		if err != nil {
+			return "", "", err
 		}
-		if p == ProviderBedrock && model != "" && strings.Contains(model, "/") {
-			return "", fmt.Errorf("bedrock provider requires a Bedrock model ID (e.g. anthropic.claude-sonnet-4-6), got %q", model)
-		}
-		if p == ProviderOpenRouter && model != "" && !strings.Contains(model, "/") && strings.Contains(model, ".") {
-			return "", fmt.Errorf("openrouter provider requires an OpenRouter model ID (e.g. anthropic/claude-sonnet-4.6), got %q", model)
-		}
-		return p, nil
+		return provider, rawModel, nil
 	}
-	return detectProvider(model)
+
+	provider, err := parseProvider(rawProvider)
+	if err != nil {
+		return "", "", err
+	}
+
+	model := rawModel
+	if model == "" {
+		model = defaultModelForProvider(provider)
+	}
+	if err := validateProviderModel(provider, model); err != nil {
+		return "", "", err
+	}
+
+	return provider, model, nil
+}
+
+func parseProvider(rawProvider string) (Provider, error) {
+	p := Provider(rawProvider)
+	if !p.Valid() {
+		return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
+	}
+	return p, nil
+}
+
+func validateProviderModel(provider Provider, model string) error {
+	if provider == ProviderBedrock && model != "" && strings.Contains(model, "/") {
+		return fmt.Errorf("bedrock provider requires a Bedrock model ID (e.g. anthropic.claude-sonnet-4-6), got %q", model)
+	}
+	if provider == ProviderOpenRouter && model != "" && !strings.Contains(model, "/") && strings.Contains(model, ".") {
+		return fmt.Errorf("openrouter provider requires an OpenRouter model ID (e.g. anthropic/claude-sonnet-4.6), got %q", model)
+	}
+	return nil
+}
+
+func defaultModelForProvider(provider Provider) string {
+	if provider == ProviderBedrock {
+		return defaultBedrockModel
+	}
+	return defaultOpenRouterModel
 }
 
 // detectProvider infers the AI provider from the model ID format.

@@ -41,20 +41,24 @@ branch_pattern: "^(\\d+)-"   # extract issue number from branch name
 auto_draft_pr: true           # open draft PR when review is clean
 ignore_paths:
   - "*.lock"
+  - ".env*"
   - "vendor/**"
   - "generated/**"
 
-# AI provider: "openrouter" (default) or "bedrock"
-# Auto-detected from model ID if omitted (slash = OpenRouter, dot = Bedrock)
+# AI provider: "openrouter" or "bedrock"
+# If omitted, froggr uses the server's default provider:
+# OpenRouter when configured, otherwise Bedrock in Bedrock-only installs.
+# Auto-detected from model ID if omitted and model is set (slash = OpenRouter, dot = Bedrock)
 provider: "openrouter"
 
 # Any model available on your chosen provider
 model: "anthropic/claude-sonnet-4.6"
 ```
 
-If `.froggr.yml` is missing, froggr uses defaults. If GitHub cannot read the
-file for some other reason, froggr skips the review rather than silently
-changing review policy.
+If `.froggr.yml` is missing, froggr uses provider-aware defaults. OpenRouter is
+preferred when configured; Bedrock becomes the default in Bedrock-only
+deployments. If GitHub cannot read the file for some other reason, froggr skips
+the review rather than silently changing review policy.
 
 ### OpenRouter (default)
 
@@ -105,7 +109,10 @@ model: anthropic.claude-sonnet-4-6
 | `AWS_REGION` | If using Bedrock | AWS region for Bedrock (e.g. `us-west-2`); `AWS_DEFAULT_REGION` is also accepted as a fallback |
 | `PORT` | No | Server port (default: `8080`) |
 
-At least one AI provider must be configured (`OPENROUTER_API_KEY` or `AWS_REGION`). Bedrock uses the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles).
+At least one AI provider must be configured (`OPENROUTER_API_KEY` or
+`AWS_REGION`). Repos that omit `provider`/`model` inherit defaults from the AI
+providers available on the server. Bedrock uses the standard AWS credential
+chain (env vars, `~/.aws/credentials`, IAM roles).
 
 ### Run
 

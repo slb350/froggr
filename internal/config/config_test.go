@@ -204,7 +204,22 @@ func TestDefaults(t *testing.T) {
 	assert.True(t, cfg.AutoDraftPR)
 	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+	assert.Contains(t, cfg.IgnorePaths, ".env*")
 	assert.NotEmpty(t, cfg.IgnorePaths)
+}
+
+func TestDefaultsForProviders(t *testing.T) {
+	t.Run("prefers openrouter when available", func(t *testing.T) {
+		cfg := DefaultsForProviders(ProviderBedrock, ProviderOpenRouter)
+		assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+		assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+	})
+
+	t.Run("uses bedrock when it is the only provider", func(t *testing.T) {
+		cfg := DefaultsForProviders(ProviderBedrock)
+		assert.Equal(t, ProviderBedrock, cfg.Provider)
+		assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+	})
 }
 
 func TestParse_ExplicitProviderBedrock(t *testing.T) {
@@ -314,16 +329,14 @@ model: anthropic.claude-haiku-4-5-20251001-v1:0
 	assert.Equal(t, ProviderBedrock, cfg.Provider)
 }
 
-func TestParse_BedrockWithDefaultModel_ReturnsError(t *testing.T) {
-	// provider: bedrock without an explicit model would inherit the
-	// OpenRouter-format default, which Bedrock would reject at runtime.
+func TestParse_BedrockWithoutModel_UsesBedrockDefaultModel(t *testing.T) {
 	input := []byte(`
 provider: bedrock
 `)
-	_, err := Parse(input)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "bedrock")
-	assert.Contains(t, err.Error(), "Bedrock model ID")
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
 }
 
 func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {
@@ -334,4 +347,34 @@ model: gpt-4o
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot auto-detect provider")
 	assert.Contains(t, err.Error(), "gpt-4o")
+}
+
+func TestParseWithDefaults_EmptyContentUsesProvidedDefaults(t *testing.T) {
+	defaults := DefaultsForProvider(ProviderBedrock)
+
+	cfg, err := ParseWithDefaults(nil, defaults)
+	require.NoError(t, err)
+	assert.Equal(t, defaults.Provider, cfg.Provider)
+	assert.Equal(t, defaults.Model, cfg.Model)
+}
+
+func TestParseWithDefaults_ProviderOnlyUsesProviderSpecificDefaultModel(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+`)
+
+	cfg, err := ParseWithDefaults(input, Defaults())
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+}
+
+func TestParse_ExplicitEmptyIgnorePaths_OverridesDefaults(t *testing.T) {
+	input := []byte(`
+ignore_paths: []
+`)
+
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.IgnorePaths)
 }

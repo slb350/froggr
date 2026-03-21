@@ -122,6 +122,7 @@ func TestEngine_Review_IssueClosed_Skips(t *testing.T) {
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Empty(t, gh.commentPosted)
 }
 
@@ -167,6 +168,7 @@ func TestEngine_Review_CommentPostError_Propagates(t *testing.T) {
 	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
+	assert.True(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "rate limited")
 	assert.Contains(t, err.Error(), "posting review comment")
 }
@@ -182,6 +184,7 @@ func TestEngine_Review_DraftPRError_Propagates(t *testing.T) {
 	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
 	require.Error(t, err)
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "forbidden")
 	assert.Contains(t, err.Error(), "creating draft PR")
 }
@@ -210,6 +213,7 @@ func TestEngine_Review_ComparisonTooLarge_SkipCommentFails(t *testing.T) {
 	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "posting skipped review comment")
 	assert.Equal(t, 0, ai.calls)
 }

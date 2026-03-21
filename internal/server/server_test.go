@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/review"
 	"github.com/slb350/froggr/internal/testutil"
 	"github.com/stretchr/testify/assert"
@@ -39,7 +40,7 @@ func webhookRequest(eventType string, payload []byte, secret string) *http.Reque
 
 func newTestServer(gh *mockGHClient, eng *mockReviewer) *Server {
 	factory := func(_ int64) review.GitHubClient { return gh }
-	handler := NewHandler(factory, eng, testDebounceWindow, testLogger())
+	handler := NewHandler(factory, eng, config.Defaults(), testDebounceWindow, testLogger())
 	return NewServer(handler, []byte(testWebhookSecret), testLogger())
 }
 
@@ -98,6 +99,31 @@ func TestServer_UnknownEventType(t *testing.T) {
 
 	payload := []byte(`{"zen": "Testing.", "hook_id": 1}`)
 	req := webhookRequest("ping", payload, testWebhookSecret)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	noReview(t, eng, testDebounceWindow*2)
+}
+
+func TestServer_DeletedBranchPushIsIgnored(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{}
+	srv := newTestServer(gh, eng)
+	defer srv.Stop()
+
+	payload := []byte(`{
+		"ref": "refs/heads/42-add-auth",
+		"after": "0000000000000000000000000000000000000000",
+		"deleted": true,
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 12345}
+	}`)
+	req := webhookRequest("push", payload, testWebhookSecret)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 

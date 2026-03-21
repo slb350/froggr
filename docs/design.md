@@ -35,9 +35,10 @@ branch_pattern: "^(\\d+)-"   # how to extract issue number from branch name
 auto_draft_pr: true
 ignore_paths:
   - "*.lock"
+  - ".env*"
   - "vendor/**"
   - "generated/**"
-provider: "openrouter"                # "openrouter" (default) or "bedrock"
+provider: "openrouter"                # "openrouter" or "bedrock"
 model: "anthropic/claude-sonnet-4.6"  # any model ID on the chosen provider
 ```
 
@@ -199,9 +200,11 @@ On subsequent reviews, froggr compares new findings against previous comments. I
 
 froggr supports multiple AI providers. Each repo selects its provider via the
 `provider` field in `.froggr.yml`, or it is auto-detected from the model ID
-format (slash = OpenRouter, dot = Bedrock). Provider-agnostic types live in
-`internal/ai/`; provider-specific logic is encapsulated in `internal/openrouter/`
-and `internal/bedrock/`.
+format (slash = OpenRouter, dot = Bedrock). If a repo omits both `provider`
+and `model`, froggr falls back to provider-aware server defaults: OpenRouter
+when configured, otherwise Bedrock in Bedrock-only installs. Provider-agnostic
+types live in `internal/ai/`; provider-specific logic is encapsulated in
+`internal/openrouter/` and `internal/bedrock/`.
 
 ### OpenRouter (default)
 
@@ -250,7 +253,7 @@ variables.
 - **Token scoping**: Installation tokens are limited to repos that installed the app
 - **No code persistence**: Code is fetched via API, reviewed in memory, then discarded
 - **Code sent to AI provider**: Same trust model as GitHub Copilot, Greptile, or CodeRabbit — users opt in by installing the app
-- **Secrets protection**: Respects `.gitignore` and `ignore_paths` — never sends lockfiles, env files, or generated code to the model
+- **Secrets protection**: Built-in defaults skip lockfiles, env files, vendor, and generated code; repos can extend that via `ignore_paths`
 
 ## Post-MVP Roadmap
 
