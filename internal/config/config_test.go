@@ -265,15 +265,17 @@ model: anthropic.claude-sonnet-4-6
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
-func TestParse_ExplicitBedrockOverridesOpenRouterModel(t *testing.T) {
+func TestParse_BedrockWithOpenRouterModel_ReturnsError(t *testing.T) {
+	// Bedrock cannot use OpenRouter-format model IDs (with slash).
+	// Catch this at config parse time rather than at review time.
 	input := []byte(`
 provider: bedrock
 model: anthropic/claude-sonnet-4.6
 `)
-	cfg, err := Parse(input)
-	require.NoError(t, err)
-	assert.Equal(t, ProviderBedrock, cfg.Provider)
-	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bedrock")
+	assert.Contains(t, err.Error(), "Bedrock model ID")
 }
 
 func TestProvider_Valid(t *testing.T) {
@@ -307,6 +309,18 @@ model: anthropic.claude-haiku-4-5-20251001-v1:0
 	cfg, err := Parse(input)
 	require.NoError(t, err)
 	assert.Equal(t, ProviderBedrock, cfg.Provider)
+}
+
+func TestParse_BedrockWithDefaultModel_ReturnsError(t *testing.T) {
+	// provider: bedrock without an explicit model would inherit the
+	// OpenRouter-format default, which Bedrock would reject at runtime.
+	input := []byte(`
+provider: bedrock
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bedrock")
+	assert.Contains(t, err.Error(), "Bedrock model ID")
 }
 
 func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {

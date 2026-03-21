@@ -57,7 +57,11 @@ func main() {
 		return ghub.NewClient(appAuth.ClientForInstallation(installationID))
 	}
 
-	providers := buildProviders(logger)
+	providers, err := buildProviders(logger)
+	if err != nil {
+		logger.Error("failed to initialize AI providers", "error", err)
+		os.Exit(1)
+	}
 	if len(providers) == 0 {
 		logger.Error("no AI providers configured: set OPENROUTER_API_KEY and/or AWS_REGION")
 		os.Exit(1)
@@ -120,14 +124,13 @@ func envOr(key, fallback string) string {
 // buildProviders creates AI clients from available environment variables.
 // Returns an empty map if no providers are configured; the caller must
 // enforce the minimum.
-func buildProviders(logger *slog.Logger) map[config.Provider]review.AIClient {
+func buildProviders(logger *slog.Logger) (map[config.Provider]review.AIClient, error) {
 	providers := make(map[config.Provider]review.AIClient)
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
 		client, err := openrouter.NewClient(key)
 		if err != nil {
-			logger.Error("failed to initialize OpenRouter client", "error", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("initializing OpenRouter client: %w", err)
 		}
 		providers[config.ProviderOpenRouter] = client
 		logger.Info("registered AI provider", "provider", config.ProviderOpenRouter)
@@ -139,14 +142,13 @@ func buildProviders(logger *slog.Logger) map[config.Provider]review.AIClient {
 		client, err := bedrock.NewClient(initCtx, region)
 		initCancel()
 		if err != nil {
-			logger.Error("failed to initialize Bedrock client", "error", err)
-			os.Exit(1)
+			return nil, fmt.Errorf("initializing Bedrock client: %w", err)
 		}
 		providers[config.ProviderBedrock] = client
 		logger.Info("registered AI provider", "provider", config.ProviderBedrock, "region", region)
 	}
 
-	return providers
+	return providers, nil
 }
 
 // awsRegion returns the configured AWS region from environment variables.

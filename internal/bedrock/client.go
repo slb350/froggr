@@ -55,7 +55,10 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 		return "", fmt.Errorf("bedrock: %w", err)
 	}
 
-	system, messages := splitMessages(req.Messages)
+	system, messages, err := splitMessages(req.Messages)
+	if err != nil {
+		return "", err
+	}
 
 	input := &bedrockruntime.ConverseInput{
 		ModelId:  aws.String(req.Model),
@@ -101,7 +104,8 @@ func checkStopReason(reason types.StopReason) error {
 
 // splitMessages separates system messages into Bedrock's System field
 // and converts remaining messages to Bedrock's Message type.
-func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Message) {
+// Returns an error if a non-system message has an unrecognized role.
+func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Message, error) {
 	var system []types.SystemContentBlock
 	var messages []types.Message
 
@@ -110,17 +114,35 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 			system = append(system, &types.SystemContentBlockMemberText{Value: m.Content})
 			continue
 		}
-		// ai.Role string values ("user", "assistant") intentionally match
-		// Bedrock's ConversationRole values, so the cast is safe.
+		role, err := bedrockRole(m.Role)
+		if err != nil {
+			return nil, nil, err
+		}
 		messages = append(messages, types.Message{
-			Role: types.ConversationRole(m.Role),
+			Role: role,
 			Content: []types.ContentBlock{
 				&types.ContentBlockMemberText{Value: m.Content},
 			},
 		})
 	}
 
-	return system, messages
+	return system, messages, nil
+}
+
+// bedrockRole maps ai.Role to Bedrock's ConversationRole via an explicit
+// switch so that adding a new ai.Role without updating this mapping
+// produces a clear error rather than silently passing an invalid value.
+// Invariant: ai.Role string values match Bedrock's ConversationRole values.
+// This is verified by TestRoleValues_MatchBedrockConversationRole.
+func bedrockRole(r ai.Role) (types.ConversationRole, error) {
+	switch r {
+	case ai.RoleUser:
+		return types.ConversationRoleUser, nil
+	case ai.RoleAssistant:
+		return types.ConversationRoleAssistant, nil
+	default:
+		return "", fmt.Errorf("bedrock: unsupported role %q", r)
+	}
 }
 
 // isErrType returns true if err's chain contains an error of type T.

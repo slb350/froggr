@@ -106,11 +106,16 @@ func Parse(content []byte) (Config, error) {
 		cfg.Model = raw.Model
 	}
 
-	provider, err := resolveProvider(raw.Provider, raw.Model)
-	if err != nil {
-		return Config{}, err
+	if raw.Provider != "" || raw.Model != "" {
+		// Pass cfg.Model (not raw.Model) so that an explicit provider
+		// is validated against the effective model, which may be the
+		// default if raw.Model was empty.
+		provider, err := resolveProvider(raw.Provider, cfg.Model)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Provider = provider
 	}
-	cfg.Provider = provider
 
 	return cfg, nil
 }
@@ -127,21 +132,24 @@ func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
 	return re, nil
 }
 
-// resolveProvider determines the provider from explicit config, model ID
-// auto-detection, or the default. Explicit provider takes precedence.
-// When neither provider nor model is set, defaults to OpenRouter.
+// resolveProvider determines the provider from explicit config or model ID
+// auto-detection. Explicit provider takes precedence. When an explicit
+// provider is set, the model must be compatible (Bedrock rejects
+// OpenRouter-format model IDs and vice versa at the API level, so we
+// catch the most common misconfiguration — Bedrock with the default
+// OpenRouter model — at parse time).
 func resolveProvider(rawProvider, model string) (Provider, error) {
 	if rawProvider != "" {
 		p := Provider(rawProvider)
 		if !p.Valid() {
 			return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
 		}
+		if p == ProviderBedrock && model != "" && strings.Contains(model, "/") {
+			return "", fmt.Errorf("bedrock provider requires a Bedrock model ID (e.g. anthropic.claude-sonnet-4-6), got %q", model)
+		}
 		return p, nil
 	}
-	if model != "" {
-		return detectProvider(model)
-	}
-	return ProviderOpenRouter, nil
+	return detectProvider(model)
 }
 
 // detectProvider infers the AI provider from the model ID format.

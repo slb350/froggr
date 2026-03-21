@@ -288,26 +288,17 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 	assert.Contains(t, err.Error(), "Service Temporarily Unavailable")
 }
 
-func TestComplete_EmptyModel(t *testing.T) {
+func TestComplete_InvalidRequest_CallsValidate(t *testing.T) {
 	c, err := NewClient("sk-or-v1-test")
 	require.NoError(t, err)
+
+	// Empty model — proves Validate() is called before any HTTP interaction.
 	_, err = c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "",
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
-}
-
-func TestComplete_NoMessages(t *testing.T) {
-	c, err := NewClient("sk-or-v1-test")
-	require.NoError(t, err)
-	_, err = c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "model",
-		Messages: []ai.Message{},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one message")
 }
 
 func TestComplete_ServerError_MultiByteUTF8Truncation(t *testing.T) {

@@ -17,7 +17,6 @@ import (
 // Compile-time check that *Client satisfies review.AIClient.
 var _ review.AIClient = (*Client)(nil)
 
-
 // mockConverseAPI implements converseAPI for testing.
 type mockConverseAPI struct {
 	output *bedrockruntime.ConverseOutput
@@ -365,28 +364,18 @@ func TestComplete_WhitespaceOnlyContent(t *testing.T) {
 	assert.Contains(t, err.Error(), "no text content in response")
 }
 
-func TestComplete_EmptyModel(t *testing.T) {
+func TestComplete_InvalidRequest_CallsValidate(t *testing.T) {
 	mock := &mockConverseAPI{output: converseOutput("ok")}
 	c := newClientWithAPI(mock)
 
+	// Empty model — proves Validate() is called before any API interaction.
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "",
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
-}
-
-func TestComplete_SystemOnlyMessages(t *testing.T) {
-	mock := &mockConverseAPI{output: converseOutput("ok")}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: ai.RoleSystem, Content: "system prompt"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "non-system message")
+	assert.Nil(t, mock.input, "API should not have been called")
 }
 
 func TestComplete_StopReasons(t *testing.T) {
@@ -469,8 +458,14 @@ func TestNewClientWithAPI_NilPanics(t *testing.T) {
 	})
 }
 
+func TestBedrockRole_RejectsUnknownRole(t *testing.T) {
+	_, err := bedrockRole(ai.Role("tool"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported role")
+}
+
 func TestRoleValues_MatchBedrockConversationRole(t *testing.T) {
-	// splitMessages casts ai.Role directly to types.ConversationRole.
+	// bedrockRole maps ai.Role to types.ConversationRole via a switch.
 	// This test breaks if either side changes its string constants.
 	assert.Equal(t, string(types.ConversationRoleUser), string(ai.RoleUser))
 	assert.Equal(t, string(types.ConversationRoleAssistant), string(ai.RoleAssistant))
