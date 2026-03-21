@@ -36,7 +36,7 @@ func TestComplete_Success(t *testing.T) {
 
 	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic/claude-sonnet-4",
-		Messages: []ai.Message{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}},
+		Messages: []ai.Message{{Role: ai.RoleSystem, Content: "sys"}, {Role: ai.RoleUser, Content: "usr"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Review looks clean.", result)
@@ -56,7 +56,7 @@ func TestComplete_VerifiesHeaders(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
 }
@@ -82,8 +82,8 @@ func TestComplete_VerifiesBody(t *testing.T) {
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model: "anthropic/claude-sonnet-4",
 		Messages: []ai.Message{
-			{Role: "system", Content: "Review this code"},
-			{Role: "user", Content: "diff here"},
+			{Role: ai.RoleSystem, Content: "Review this code"},
+			{Role: ai.RoleUser, Content: "diff here"},
 		},
 	})
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestComplete_EmptyAPIKey(t *testing.T) {
 	c := NewClient("")
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key")
@@ -109,7 +109,7 @@ func TestComplete_AuthError401(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "401")
@@ -126,7 +126,7 @@ func TestComplete_RateLimit429(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "429")
@@ -143,7 +143,7 @@ func TestComplete_ServerError500(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
@@ -157,7 +157,7 @@ func TestComplete_MalformedResponse(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing")
@@ -170,7 +170,7 @@ func TestComplete_EmptyChoices(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no choices")
@@ -185,7 +185,7 @@ func TestComplete_EmptyContent(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty content")
@@ -201,7 +201,7 @@ func TestComplete_ContextCancellation(t *testing.T) {
 
 	_, err := c.Complete(ctx, ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 }
@@ -214,7 +214,7 @@ func TestComplete_ResponseTooLarge(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
@@ -230,7 +230,7 @@ func TestComplete_APIErrorInBody(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "nonexistent/model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model not found")
@@ -266,7 +266,7 @@ func TestComplete_ServerError_NoBody(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "502")
@@ -280,7 +280,7 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "502")
@@ -296,7 +296,7 @@ func TestComplete_TrimsWhitespace(t *testing.T) {
 
 	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
 	assert.False(t, strings.HasPrefix(result, " "))

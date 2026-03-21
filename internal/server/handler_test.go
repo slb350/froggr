@@ -229,7 +229,7 @@ func TestHandler_ConfigFetchFailure_SkipsReview(t *testing.T) {
 	noReview(t, eng, testDebounceWindow*3)
 }
 
-func TestHandler_InvalidConfigYAML_FallsBackToDefaults(t *testing.T) {
+func TestHandler_InvalidConfigYAML_SkipsReview(t *testing.T) {
 	gh := &mockGHClient{
 		fileContent: ghub.FileContent{
 			Path:    ".froggr.yml",
@@ -242,10 +242,7 @@ func TestHandler_InvalidConfigYAML_FallsBackToDefaults(t *testing.T) {
 
 	h.HandlePush(context.Background(), testPush())
 
-	call := waitForReview(t, eng, 500*time.Millisecond)
-	defaults := config.Defaults()
-	assert.Equal(t, defaults.Model, call.cfg.Model)
-	assert.True(t, call.cfg.AutoDraftPR)
+	noReview(t, eng, testDebounceWindow*3)
 }
 
 type blockingReviewer struct {

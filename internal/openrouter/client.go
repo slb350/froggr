@@ -102,6 +102,9 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 	if c.apiKey == "" {
 		return "", fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
 	}
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("OpenRouter: %w", err)
+	}
 
 	respBody, err := c.doRequest(ctx, req)
 	if err != nil {
@@ -115,7 +118,7 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 func (c *Client) doRequest(ctx context.Context, req ai.CompletionRequest) ([]byte, error) {
 	msgs := make([]wireMessage, len(req.Messages))
 	for i, m := range req.Messages {
-		msgs[i] = wireMessage{Role: m.Role, Content: m.Content}
+		msgs[i] = wireMessage{Role: string(m.Role), Content: m.Content}
 	}
 	reqJSON, err := json.Marshal(chatCompletionRequest{Model: req.Model, Messages: msgs})
 	if err != nil {

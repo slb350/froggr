@@ -44,7 +44,7 @@ func TestComplete_Success(t *testing.T) {
 
 	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "review this code"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "review this code"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Review looks clean.", result)
@@ -58,8 +58,8 @@ func TestComplete_SystemMessageSeparation(t *testing.T) {
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model: "anthropic.claude-sonnet-4-6",
 		Messages: []ai.Message{
-			{Role: "system", Content: "You are a code reviewer."},
-			{Role: "user", Content: "review this"},
+			{Role: ai.RoleSystem, Content: "You are a code reviewer."},
+			{Role: ai.RoleUser, Content: "review this"},
 		},
 	})
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func TestComplete_EmptyResponse(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no text content")
@@ -102,7 +102,7 @@ func TestComplete_ErrorPropagation(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "throttling exception")
@@ -117,7 +117,7 @@ func TestComplete_ContextCancellation(t *testing.T) {
 
 	_, err := c.Complete(ctx, ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 }
@@ -131,7 +131,7 @@ func TestComplete_NoMessages(t *testing.T) {
 		Messages: []ai.Message{},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no messages")
+	assert.Contains(t, err.Error(), "at least one message")
 }
 
 func TestComplete_TrimsWhitespace(t *testing.T) {
@@ -140,7 +140,7 @@ func TestComplete_TrimsWhitespace(t *testing.T) {
 
 	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "result with whitespace", result)
@@ -152,10 +152,10 @@ func TestComplete_EmptyTextContent(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "empty content")
+	assert.Contains(t, err.Error(), "no text content")
 }
 
 func TestComplete_UnexpectedOutputType(t *testing.T) {
@@ -168,7 +168,7 @@ func TestComplete_UnexpectedOutputType(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected output type")
@@ -180,7 +180,7 @@ func TestComplete_ThrottlingException(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limit")
@@ -193,7 +193,7 @@ func TestComplete_ValidationException(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "bad-model",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "validation")
@@ -206,7 +206,7 @@ func TestComplete_AccessDeniedException(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access denied")
@@ -219,8 +219,107 @@ func TestComplete_ModelNotReadyException(t *testing.T) {
 
 	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not ready")
+}
+
+func TestComplete_MultipleTextBlocks(t *testing.T) {
+	mock := &mockConverseAPI{
+		output: &bedrockruntime.ConverseOutput{
+			Output: &types.ConverseOutputMemberMessage{
+				Value: types.Message{
+					Role: "assistant",
+					Content: []types.ContentBlock{
+						&types.ContentBlockMemberText{Value: "first part"},
+						&types.ContentBlockMemberText{Value: "second part"},
+					},
+				},
+			},
+		},
+	}
+	c := newClientWithAPI(mock)
+
+	result, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "first part\nsecond part", result)
+}
+
+func TestComplete_MultipleSystemMessages(t *testing.T) {
+	mock := &mockConverseAPI{output: converseOutput("ok")}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model: "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{
+			{Role: ai.RoleSystem, Content: "System prompt 1"},
+			{Role: ai.RoleSystem, Content: "System prompt 2"},
+			{Role: ai.RoleUser, Content: "review this"},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, mock.input.System, 2)
+	sys0, ok := mock.input.System[0].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "System prompt 1", sys0.Value)
+	sys1, ok := mock.input.System[1].(*types.SystemContentBlockMemberText)
+	require.True(t, ok)
+	assert.Equal(t, "System prompt 2", sys1.Value)
+
+	require.Len(t, mock.input.Messages, 1)
+}
+
+func TestComplete_WhitespaceOnlyContent(t *testing.T) {
+	mock := &mockConverseAPI{output: converseOutput("   \n  ")}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no text content")
+}
+
+func TestComplete_ResourceNotFoundException(t *testing.T) {
+	mock := &mockConverseAPI{err: &types.ResourceNotFoundException{Message: aws.String("model not found in us-east-1")}}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "bad.model.id",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model not found")
+	assert.Contains(t, err.Error(), "check model ID and region")
+}
+
+func TestComplete_ServiceQuotaExceededException(t *testing.T) {
+	mock := &mockConverseAPI{err: &types.ServiceQuotaExceededException{Message: aws.String("quota exceeded")}}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "quota exceeded")
+	assert.Contains(t, err.Error(), "Bedrock")
+}
+
+func TestComplete_EmptyModel(t *testing.T) {
+	mock := &mockConverseAPI{output: converseOutput("ok")}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
 }

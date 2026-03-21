@@ -78,7 +78,7 @@ provider: bedrock
 model: anthropic.claude-sonnet-4-6
 ```
 
-**Available Bedrock models:**
+**Popular Bedrock models for code review:**
 - `anthropic.claude-sonnet-4-6` — Sonnet 4.6
 - `anthropic.claude-opus-4-6-v1` — Opus 4.6
 - `anthropic.claude-haiku-4-5-20251001-v1:0` — Haiku 4.5
@@ -92,7 +92,7 @@ model: anthropic.claude-sonnet-4-6
   - Webhook URL pointing to your server's `/webhook` endpoint
   - Permissions: Issues (read/write), Pull requests (read/write), Contents (read)
   - Events: Push, Issues
-- An [OpenRouter API key](https://openrouter.ai/keys)
+- An [OpenRouter API key](https://openrouter.ai/keys) and/or AWS credentials for [Bedrock](https://aws.amazon.com/bedrock/) (at least one AI provider required)
 
 ### Environment Variables
 

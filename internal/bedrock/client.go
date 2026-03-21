@@ -41,8 +41,8 @@ func newClientWithAPI(api converseAPI) *Client {
 
 // Complete sends a chat completion request via the Bedrock Converse API.
 func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
-	if len(req.Messages) == 0 {
-		return "", fmt.Errorf("Bedrock: no messages provided")
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("Bedrock: %w", err)
 	}
 
 	system, messages := splitMessages(req.Messages)
@@ -70,12 +70,12 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 	var messages []types.Message
 
 	for _, m := range msgs {
-		if m.Role == "system" {
+		if m.Role == ai.RoleSystem {
 			system = append(system, &types.SystemContentBlockMemberText{Value: m.Content})
 			continue
 		}
 		messages = append(messages, types.Message{
-			Role: types.ConversationRole(m.Role),
+			Role: types.ConversationRole(string(m.Role)),
 			Content: []types.ContentBlock{
 				&types.ContentBlockMemberText{Value: m.Content},
 			},
@@ -107,25 +107,38 @@ func formatError(err error) error {
 		return fmt.Errorf("Bedrock model not ready: %w", err)
 	}
 
+	var notFound *types.ResourceNotFoundException
+	if errors.As(err, &notFound) {
+		return fmt.Errorf("Bedrock model not found (check model ID and region): %w", err)
+	}
+
+	var quotaExceeded *types.ServiceQuotaExceededException
+	if errors.As(err, &quotaExceeded) {
+		return fmt.Errorf("Bedrock service quota exceeded (request a quota increase): %w", err)
+	}
+
 	return fmt.Errorf("Bedrock Converse: %w", err)
 }
 
-// extractText pulls the assistant's text from the Converse response.
+// extractText pulls the assistant's text from the Converse response,
+// concatenating all text content blocks.
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 	msg, ok := resp.Output.(*types.ConverseOutputMemberMessage)
 	if !ok {
 		return "", fmt.Errorf("Bedrock: unexpected output type %T", resp.Output)
 	}
 
+	var parts []string
 	for _, block := range msg.Value.Content {
 		if text, ok := block.(*types.ContentBlockMemberText); ok {
-			content := strings.TrimSpace(text.Value)
-			if content == "" {
-				return "", fmt.Errorf("Bedrock returned empty content")
+			if s := strings.TrimSpace(text.Value); s != "" {
+				parts = append(parts, s)
 			}
-			return content, nil
 		}
 	}
 
-	return "", fmt.Errorf("Bedrock: no text content in response")
+	if len(parts) == 0 {
+		return "", fmt.Errorf("Bedrock: no text content in response")
+	}
+	return strings.Join(parts, "\n"), nil
 }

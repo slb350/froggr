@@ -71,8 +71,8 @@ func (e *Engine) runAIReview(ctx context.Context, rc Context, provider, model st
 	aiResponse, err := client.Complete(ctx, ai.CompletionRequest{
 		Model: model,
 		Messages: []ai.Message{
-			{Role: "system", Content: SystemPrompt()},
-			{Role: "user", Content: userPrompt},
+			{Role: ai.RoleSystem, Content: SystemPrompt()},
+			{Role: ai.RoleUser, Content: userPrompt},
 		},
 	})
 	if err != nil {
