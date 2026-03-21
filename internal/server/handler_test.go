@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,6 +54,10 @@ func (m *mockReviewer) getCalls() []reviewCall {
 type mockGHClient struct {
 	fileContent ghub.FileContent
 	fileErr     error
+
+	mu             sync.Mutex
+	commentPosted  string
+	commentPostErr error
 }
 
 func (m *mockGHClient) GetIssue(_ context.Context, _, _ string, _ int) (ghub.IssueInfo, error) {
@@ -71,8 +76,17 @@ func (m *mockGHClient) GetFileContent(_ context.Context, _, _, _, _ string) (ghu
 	return m.fileContent, m.fileErr
 }
 
-func (m *mockGHClient) CreateIssueComment(_ context.Context, _, _ string, _ int, _ string) error {
-	return nil
+func (m *mockGHClient) CreateIssueComment(_ context.Context, _, _ string, _ int, body string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.commentPosted = body
+	return m.commentPostErr
+}
+
+func (m *mockGHClient) getCommentPosted() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commentPosted
 }
 
 func (m *mockGHClient) CreateDraftPR(_ context.Context, _, _, _, _, _, _ string) (int, string, error) {
@@ -97,33 +111,64 @@ func testLogger() *slog.Logger {
 }
 
 func newTestHandler(gh *mockGHClient, eng ReviewRunner) *Handler {
+	return newTestHandlerWithDefaults(gh, eng, config.Defaults())
+}
+
+func newTestHandlerWithDefaults(gh *mockGHClient, eng ReviewRunner, defaults config.Config) *Handler {
 	factory := func(_ int64) review.GitHubClient {
 		return gh
 	}
-	return NewHandler(factory, eng, testDebounceWindow, testLogger())
+	return NewHandler(factory, eng, defaults, testDebounceWindow, testLogger())
+}
+
+// pollUntil polls fn every 5ms until it returns a value and true, or the
+// timeout expires. Eliminates duplication across wait-for-X test helpers.
+func pollUntil[T any](t *testing.T, timeout time.Duration, msg string, fn func() (T, bool)) T {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		if v, ok := fn(); ok {
+			return v
+		}
+		select {
+		case <-deadline:
+			t.Fatal(msg)
+			var zero T
+			return zero
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
 }
 
 func waitForReview(t *testing.T, eng *mockReviewer, timeout time.Duration) reviewCall {
 	t.Helper()
-	deadline := time.After(timeout)
-	for {
+	return pollUntil(t, timeout, "timed out waiting for review call", func() (reviewCall, bool) {
 		calls := eng.getCalls()
 		if len(calls) > 0 {
-			return calls[len(calls)-1]
+			return calls[len(calls)-1], true
 		}
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for review call")
-			return reviewCall{}
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+		return reviewCall{}, false
+	})
+}
+
+func waitForComment(t *testing.T, gh *mockGHClient, timeout time.Duration) string {
+	t.Helper()
+	return pollUntil(t, timeout, "timed out waiting for comment to be posted", func() (string, bool) {
+		c := gh.getCommentPosted()
+		return c, c != ""
+	})
 }
 
 func noReview(t *testing.T, eng *mockReviewer, wait time.Duration) {
 	t.Helper()
 	time.Sleep(wait)
 	assert.Empty(t, eng.getCalls(), "expected no review calls")
+}
+
+func noComment(t *testing.T, gh *mockGHClient, wait time.Duration) {
+	t.Helper()
+	time.Sleep(wait)
+	assert.Empty(t, gh.getCommentPosted(), "expected no comment to be posted")
 }
 
 // --- Tests ---
@@ -184,6 +229,23 @@ func TestHandleIssuesClosed(t *testing.T) {
 	noReview(t, eng, testDebounceWindow*3)
 }
 
+func TestHandleIssuesClosed_CancelsAllPendingBranchesForIssue(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	pushA := testPush()
+	pushB := testPush()
+	pushB.Branch = "42-fix-tests"
+
+	h.HandlePush(context.Background(), pushA)
+	h.HandlePush(context.Background(), pushB)
+	h.HandleIssuesClosed("owner", "repo", 42)
+
+	noReview(t, eng, testDebounceWindow*3)
+}
+
 func TestHandler_FetchesRepoConfig(t *testing.T) {
 	gh := &mockGHClient{
 		fileContent: ghub.FileContent{
@@ -202,6 +264,26 @@ func TestHandler_FetchesRepoConfig(t *testing.T) {
 	assert.False(t, call.cfg.AutoDraftPR)
 }
 
+func TestHandler_PartialConfigInheritsProviderAwareDefaults(t *testing.T) {
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "auto_draft_pr: false\n",
+		},
+	}
+	eng := &mockReviewer{}
+	defaults := config.DefaultsForProvider(config.ProviderBedrock)
+	h := newTestHandlerWithDefaults(gh, eng, defaults)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	call := waitForReview(t, eng, 500*time.Millisecond)
+	assert.False(t, call.cfg.AutoDraftPR)
+	assert.Equal(t, config.ProviderBedrock, call.cfg.Provider)
+	assert.Equal(t, defaults.Model, call.cfg.Model)
+}
+
 func TestHandler_FallbackToDefaults(t *testing.T) {
 	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
 	eng := &mockReviewer{}
@@ -214,6 +296,20 @@ func TestHandler_FallbackToDefaults(t *testing.T) {
 	defaults := config.Defaults()
 	assert.Equal(t, defaults.Model, call.cfg.Model)
 	assert.True(t, call.cfg.AutoDraftPR)
+}
+
+func TestHandler_FallbackToBedrockDefaultsWhenOnlyBedrockConfigured(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{}
+	defaults := config.DefaultsForProvider(config.ProviderBedrock)
+	h := newTestHandlerWithDefaults(gh, eng, defaults)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	call := waitForReview(t, eng, 500*time.Millisecond)
+	assert.Equal(t, config.ProviderBedrock, call.cfg.Provider)
+	assert.Equal(t, defaults.Model, call.cfg.Model)
 }
 
 func TestHandler_ConfigFetchFailure_SkipsReview(t *testing.T) {
@@ -229,7 +325,7 @@ func TestHandler_ConfigFetchFailure_SkipsReview(t *testing.T) {
 	noReview(t, eng, testDebounceWindow*3)
 }
 
-func TestHandler_InvalidConfigYAML_FallsBackToDefaults(t *testing.T) {
+func TestHandler_InvalidConfigYAML_SkipsReview(t *testing.T) {
 	gh := &mockGHClient{
 		fileContent: ghub.FileContent{
 			Path:    ".froggr.yml",
@@ -242,10 +338,110 @@ func TestHandler_InvalidConfigYAML_FallsBackToDefaults(t *testing.T) {
 
 	h.HandlePush(context.Background(), testPush())
 
+	noReview(t, eng, testDebounceWindow*3)
+}
+
+func TestHandler_BedrockConfigPipeline(t *testing.T) {
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "provider: bedrock\nmodel: anthropic.claude-sonnet-4-6\n",
+		},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
 	call := waitForReview(t, eng, 500*time.Millisecond)
-	defaults := config.Defaults()
-	assert.Equal(t, defaults.Model, call.cfg.Model)
-	assert.True(t, call.cfg.AutoDraftPR)
+	assert.Equal(t, config.ProviderBedrock, call.cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", call.cfg.Model)
+}
+
+func TestHandler_AutoDetectsBedrockFromRuntimeARN(t *testing.T) {
+	model := "arn:aws:sagemaker:us-west-2:123456789012:endpoint/bedrock-marketplace-sonnet"
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "model: " + model + "\n",
+		},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	call := waitForReview(t, eng, 500*time.Millisecond)
+	assert.Equal(t, config.ProviderBedrock, call.cfg.Provider)
+	assert.Equal(t, model, call.cfg.Model)
+}
+
+func TestHandler_AmbiguousModelID_SkipsReview(t *testing.T) {
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "model: gpt-4o\n",
+		},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	noReview(t, eng, testDebounceWindow*3)
+}
+
+func TestHandler_ReviewFailure_PostsFailureComment(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{err: errors.New("AI provider timeout")}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	waitForReview(t, eng, 500*time.Millisecond)
+
+	comment := waitForComment(t, gh, 500*time.Millisecond)
+	assert.Contains(t, comment, "Review failed")
+	assert.Contains(t, comment, "AI provider timeout")
+	assert.Contains(t, comment, "Push again to retry")
+}
+
+func TestHandler_ReviewFailure_CommentPostAlsoFails(t *testing.T) {
+	gh := &mockGHClient{
+		fileErr:        testutil.NotFoundError(),
+		commentPostErr: errors.New("GitHub API rate limited"),
+	}
+	eng := &mockReviewer{err: errors.New("AI provider timeout")}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	// The review will fail, then the failure comment post will also fail.
+	// The handler should not panic — it logs both errors and moves on.
+	waitForReview(t, eng, 500*time.Millisecond)
+
+	// The comment was attempted (mock records the body regardless of error).
+	// Verify the handler didn't panic and the comment was built correctly.
+	comment := waitForComment(t, gh, 500*time.Millisecond)
+	assert.Contains(t, comment, "Review failed")
+	assert.Contains(t, comment, "AI provider timeout")
+}
+
+func TestHandler_SuppressedReviewError_DoesNotPostFailureComment(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{err: review.SuppressFailureComment(errors.New("creating draft PR: forbidden"))}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	waitForReview(t, eng, 500*time.Millisecond)
+	noComment(t, gh, 200*time.Millisecond)
 }
 
 type blockingReviewer struct {

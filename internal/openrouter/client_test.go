@@ -9,16 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/slb350/froggr/internal/ai"
+	"github.com/slb350/froggr/internal/review"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Compile-time check that *Client satisfies review.AIClient.
+var _ review.AIClient = (*Client)(nil)
 
 func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	c := NewClient("sk-or-v1-test")
+	c, err := NewClient("sk-or-v1-test")
+	require.NoError(t, err)
 	c.httpClient = srv.Client()
 	c.setEndpoint(srv.URL)
 	return c, srv
@@ -28,14 +34,14 @@ func TestComplete_Success(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
 			Choices: []choice{
-				{Message: Message{Role: "assistant", Content: "Review looks clean."}},
+				{Message: wireMessage{Role: "assistant", Content: "Review looks clean."}},
 			},
 		})
 	})
 
-	result, err := c.Complete(context.Background(), CompletionRequest{
+	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "anthropic/claude-sonnet-4",
-		Messages: []Message{{Role: "system", Content: "sys"}, {Role: "user", Content: "usr"}},
+		Messages: []ai.Message{{Role: ai.RoleSystem, Content: "sys"}, {Role: ai.RoleUser, Content: "usr"}},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "Review looks clean.", result)
@@ -49,13 +55,13 @@ func TestComplete_VerifiesHeaders(t *testing.T) {
 		assert.NotEmpty(t, r.Header.Get("X-Title"))
 
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: Message{Content: "ok"}}},
+			Choices: []choice{{Message: wireMessage{Content: "ok"}}},
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
 }
@@ -74,26 +80,22 @@ func TestComplete_VerifiesBody(t *testing.T) {
 		assert.Equal(t, "diff here", req.Messages[1].Content)
 
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: Message{Content: "ok"}}},
+			Choices: []choice{{Message: wireMessage{Content: "ok"}}},
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model: "anthropic/claude-sonnet-4",
-		Messages: []Message{
-			{Role: "system", Content: "Review this code"},
-			{Role: "user", Content: "diff here"},
+		Messages: []ai.Message{
+			{Role: ai.RoleSystem, Content: "Review this code"},
+			{Role: ai.RoleUser, Content: "diff here"},
 		},
 	})
 	require.NoError(t, err)
 }
 
-func TestComplete_EmptyAPIKey(t *testing.T) {
-	c := NewClient("")
-	_, err := c.Complete(context.Background(), CompletionRequest{
-		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
-	})
+func TestNewClient_EmptyAPIKey(t *testing.T) {
+	_, err := NewClient("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key")
 }
@@ -106,9 +108,9 @@ func TestComplete_AuthError401(t *testing.T) {
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "401")
@@ -123,9 +125,9 @@ func TestComplete_RateLimit429(t *testing.T) {
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "429")
@@ -140,9 +142,9 @@ func TestComplete_ServerError500(t *testing.T) {
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "500")
@@ -154,9 +156,9 @@ func TestComplete_MalformedResponse(t *testing.T) {
 		_, _ = w.Write([]byte(`not json`))
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parsing")
@@ -167,9 +169,9 @@ func TestComplete_EmptyChoices(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{Choices: []choice{}})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no choices")
@@ -178,13 +180,13 @@ func TestComplete_EmptyChoices(t *testing.T) {
 func TestComplete_EmptyContent(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: Message{Role: "assistant", Content: ""}}},
+			Choices: []choice{{Message: wireMessage{Role: "assistant", Content: ""}}},
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty content")
@@ -198,9 +200,9 @@ func TestComplete_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err := c.Complete(ctx, CompletionRequest{
+	_, err := c.Complete(ctx, ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 }
@@ -211,9 +213,9 @@ func TestComplete_ResponseTooLarge(t *testing.T) {
 		_, _ = w.Write(make([]byte, 2*1024*1024+100))
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")
@@ -227,9 +229,9 @@ func TestComplete_APIErrorInBody(t *testing.T) {
 		})
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "nonexistent/model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model not found")
@@ -263,9 +265,9 @@ func TestComplete_ServerError_NoBody(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway)
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "502")
@@ -277,25 +279,57 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>Service Temporarily Unavailable</body></html>"))
 	})
 
-	_, err := c.Complete(context.Background(), CompletionRequest{
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "502")
 	assert.Contains(t, err.Error(), "Service Temporarily Unavailable")
 }
 
+func TestComplete_InvalidRequest_CallsValidate(t *testing.T) {
+	c, err := NewClient("sk-or-v1-test")
+	require.NoError(t, err)
+
+	// Empty model — proves Validate() is called before any HTTP interaction.
+	_, err = c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
+}
+
+func TestComplete_ServerError_MultiByteUTF8Truncation(t *testing.T) {
+	// Regression test for commit 5e4b63f: formatHTTPError used byte-based
+	// truncation which panicked when body had >200 bytes but <=200 runes.
+	body := strings.Repeat("🐸", 150) // 150 runes = 600 bytes (each emoji is 4 bytes)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(body))
+	})
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "model",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "502")
+	// Verify the body was truncated to 200 runes, not panicking on byte slice.
+	assert.Contains(t, err.Error(), "🐸")
+}
+
 func TestComplete_TrimsWhitespace(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{
-			Choices: []choice{{Message: Message{Content: "  result with whitespace  \n"}}},
+			Choices: []choice{{Message: wireMessage{Content: "  result with whitespace  \n"}}},
 		})
 	})
 
-	result, err := c.Complete(context.Background(), CompletionRequest{
+	result, err := c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
-		Messages: []Message{{Role: "user", Content: "test"}},
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
 	assert.False(t, strings.HasPrefix(result, " "))

@@ -47,7 +47,7 @@ func BuildContext(ctx context.Context, gh GitHubClient, push ghub.PushContext, i
 	}
 
 	if issue.State == "closed" {
-		return Context{}, fmt.Errorf("issue #%d is closed, skipping review", issueNum)
+		return Context{}, fmt.Errorf("%w: issue #%d is closed, skipping review", errIssueClosed, issueNum)
 	}
 
 	diffs, err := gh.GetBranchDiff(ctx, push.Owner, push.Repo, push.DefaultBranch, push.HeadSHA)
@@ -157,7 +157,7 @@ func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushConte
 
 	var priors []string
 	for _, c := range comments {
-		if c.GetUser() != nil && strings.HasSuffix(c.GetUser().GetLogin(), froggrBotSuffix) {
+		if c.GetUser() != nil && strings.HasSuffix(c.GetUser().GetLogin(), froggrBotSuffix) && shouldIncludePriorReview(c.GetBody()) {
 			priors = append(priors, c.GetBody())
 		}
 	}
@@ -173,4 +173,17 @@ func fetchPriorReviews(ctx context.Context, gh GitHubClient, push ghub.PushConte
 
 	start := len(priors) - maxContextPriorReviews
 	return priors[start:], start, nil
+}
+
+func shouldIncludePriorReview(body string) bool {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return false
+	}
+	for _, marker := range []string{"Review failed:", "Review skipped."} {
+		if strings.HasPrefix(trimmed, marker) || strings.Contains(trimmed, "\n\n"+marker) {
+			return false
+		}
+	}
+	return true
 }

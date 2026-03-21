@@ -160,6 +160,28 @@ func TestBuildContext_FiltersPriorFroggrComments(t *testing.T) {
 	assert.Contains(t, rc.PriorReviews[0], "froggr: looks good")
 }
 
+func TestBuildContext_ExcludesSkippedAndFailedPriorComments(t *testing.T) {
+	gh := &mockGitHub{
+		issue: ghub.IssueInfo{Number: 42, Title: "Test", State: "open"},
+		comments: []*github.IssueComment{
+			{Body: github.Ptr("## froggr review: `42-test` @ `abc1234`\n\nReview failed: rate limited\n\nPush again to retry.\n"), User: &github.User{Login: github.Ptr("froggr[bot]"), Type: github.Ptr("Bot")}},
+			{Body: github.Ptr("## froggr review: `42-test` @ `abc1234`\n\nReview skipped.\n\nComparison too large.\n"), User: &github.User{Login: github.Ptr("froggr[bot]"), Type: github.Ptr("Bot")}},
+			{Body: github.Ptr("## froggr review: `42-test` @ `abc1234`\n\nAll clean! No bugs found.\n"), User: &github.User{Login: github.Ptr("froggr[bot]"), Type: github.Ptr("Bot")}},
+		},
+		diffs: []ghub.FileDiff{},
+	}
+
+	push := ghub.PushContext{
+		Owner: "owner", Repo: "repo", Branch: "42-test",
+		HeadSHA: "abc123", DefaultBranch: "main",
+	}
+
+	rc, err := BuildContext(context.Background(), gh, push, 42, config.Defaults())
+	require.NoError(t, err)
+	require.Len(t, rc.PriorReviews, 1)
+	assert.Contains(t, rc.PriorReviews[0], "All clean!")
+}
+
 func TestBuildContext_LimitsFetchedDiffFiles(t *testing.T) {
 	gh := &mockGitHub{
 		issue: ghub.IssueInfo{Number: 42, Title: "Large change", State: "open"},

@@ -8,13 +8,23 @@ import (
 	"github.com/google/go-github/v84/github"
 )
 
+// SignatureError indicates a webhook signature validation failure, as distinct
+// from a payload parse failure. Callers can use errors.As to choose the
+// appropriate HTTP status code (401 vs 400).
+type SignatureError struct{ err error }
+
+func (e *SignatureError) Error() string { return e.err.Error() }
+func (e *SignatureError) Unwrap() error { return e.err }
+
 // ValidateAndParse validates the webhook signature and parses the event payload.
 // Returns the event type string and the parsed event (use a type switch to
 // determine the concrete type, e.g. *github.PushEvent).
+// Signature failures are wrapped in *SignatureError so callers can distinguish
+// them from parse failures.
 func ValidateAndParse(r *http.Request, secret []byte) (string, any, error) {
 	payload, err := github.ValidatePayload(r, secret)
 	if err != nil {
-		return "", nil, fmt.Errorf("validating webhook signature: %w", err)
+		return "", nil, &SignatureError{err: fmt.Errorf("validating webhook signature: %w", err)}
 	}
 
 	eventType := github.WebHookType(r)
@@ -27,12 +37,15 @@ func ValidateAndParse(r *http.Request, secret []byte) (string, any, error) {
 }
 
 // ExtractPushContext extracts the fields needed for review from a PushEvent.
-// Returns an error for tag pushes (refs/tags/).
+// Returns an error for tag pushes and deleted branches.
 func ExtractPushContext(event *github.PushEvent) (PushContext, error) {
 	ref := event.GetRef()
 
 	if strings.HasPrefix(ref, "refs/tags/") {
 		return PushContext{}, fmt.Errorf("ignoring tag push: %s", ref)
+	}
+	if event.GetDeleted() {
+		return PushContext{}, fmt.Errorf("ignoring deleted branch push: %s", ref)
 	}
 
 	branch := strings.TrimPrefix(ref, "refs/heads/")
@@ -50,12 +63,32 @@ func ExtractPushContext(event *github.PushEvent) (PushContext, error) {
 		return PushContext{}, fmt.Errorf("push event missing repository owner")
 	}
 
+	installationID := event.GetInstallation().GetID()
+	if installationID == 0 {
+		return PushContext{}, fmt.Errorf("push event missing installation ID")
+	}
+
+	repoName := repo.GetName()
+	if repoName == "" {
+		return PushContext{}, fmt.Errorf("push event missing repository name")
+	}
+
+	headSHA := event.GetAfter()
+	if headSHA == "" {
+		return PushContext{}, fmt.Errorf("push event missing head SHA")
+	}
+
+	defaultBranch := repo.GetDefaultBranch()
+	if defaultBranch == "" {
+		return PushContext{}, fmt.Errorf("push event missing default branch")
+	}
+
 	return PushContext{
-		InstallationID: event.GetInstallation().GetID(),
+		InstallationID: installationID,
 		Owner:          owner,
-		Repo:           repo.GetName(),
+		Repo:           repoName,
 		Branch:         branch,
-		HeadSHA:        event.GetAfter(),
-		DefaultBranch:  repo.GetDefaultBranch(),
+		HeadSHA:        headSHA,
+		DefaultBranch:  defaultBranch,
 	}, nil
 }

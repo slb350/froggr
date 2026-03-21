@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -42,18 +43,16 @@ func (s *Server) Stop() {
 // handleWebhook validates the webhook signature, parses the event, and routes
 // it to the appropriate handler method.
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	payload, err := github.ValidatePayload(r, s.webhookSecret)
+	eventType, event, err := ghub.ValidateAndParse(r, s.webhookSecret)
 	if err != nil {
-		http.Error(w, "invalid signature", http.StatusUnauthorized)
-		s.logger.Warn("webhook signature validation failed", "error", err)
-		return
-	}
-
-	eventType := github.WebHookType(r)
-	event, err := github.ParseWebHook(eventType, payload)
-	if err != nil {
-		http.Error(w, "malformed payload", http.StatusBadRequest)
-		s.logger.Warn("webhook payload parse failed", "error", err, "type", eventType)
+		var sigErr *ghub.SignatureError
+		if errors.As(err, &sigErr) {
+			http.Error(w, "webhook validation failed", http.StatusUnauthorized)
+			s.logger.Warn("webhook signature validation failed", "error", err)
+		} else {
+			http.Error(w, "webhook parse failed", http.StatusBadRequest)
+			s.logger.Warn("webhook payload parse failed", "error", err)
+		}
 		return
 	}
 

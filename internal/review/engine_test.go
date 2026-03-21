@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/slb350/froggr/internal/ai"
 	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
-	"github.com/slb350/froggr/internal/openrouter"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,11 +18,19 @@ type mockAI struct {
 	response string
 	err      error
 	calls    int
+	lastReq  ai.CompletionRequest
 }
 
-func (m *mockAI) Complete(_ context.Context, _ openrouter.CompletionRequest) (string, error) {
+func (m *mockAI) Complete(_ context.Context, req ai.CompletionRequest) (string, error) {
 	m.calls++
+	m.lastReq = req
 	return m.response, m.err
+}
+
+// orProvider wraps a single AIClient as an OpenRouter-only provider map,
+// reducing boilerplate in tests that only need one provider.
+func orProvider(client AIClient) map[config.Provider]AIClient {
+	return map[config.Provider]AIClient{config.ProviderOpenRouter: client}
 }
 
 func basePush() ghub.PushContext {
@@ -50,7 +58,7 @@ func TestEngine_Review_PostsComment(t *testing.T) {
 	gh := baseGitHub()
 	ai := &mockAI{response: `[{"severity":"Bug","file":"src/main.go","line":1,"description":"bug found"}]`}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.NoError(t, err)
 
@@ -66,7 +74,7 @@ func TestEngine_Review_Clean_CreatesDraftPR(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.AutoDraftPR = true
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
 	require.NoError(t, err)
 
@@ -82,7 +90,7 @@ func TestEngine_Review_Clean_NoPR_WhenDisabled(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.AutoDraftPR = false
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
 	require.NoError(t, err)
 
@@ -97,7 +105,7 @@ func TestEngine_Review_WithBugs_NoPR(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.AutoDraftPR = true
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
 	require.NoError(t, err)
 
@@ -110,10 +118,11 @@ func TestEngine_Review_IssueClosed_Skips(t *testing.T) {
 	gh.issue.State = "closed"
 	ai := &mockAI{response: "[]"}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Empty(t, gh.commentPosted)
 }
 
@@ -121,7 +130,7 @@ func TestEngine_Review_AIError_Propagates(t *testing.T) {
 	gh := baseGitHub()
 	ai := &mockAI{err: errors.New("rate limited")}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limited")
@@ -131,7 +140,7 @@ func TestEngine_Review_InvalidAIResponse_Propagates(t *testing.T) {
 	gh := baseGitHub()
 	ai := &mockAI{response: "looks good to me"}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidAIResponse)
@@ -146,7 +155,7 @@ func TestEngine_Review_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(ctx, gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
 }
@@ -156,9 +165,10 @@ func TestEngine_Review_CommentPostError_Propagates(t *testing.T) {
 	gh.commentPostErr = errors.New("rate limited")
 	ai := &mockAI{response: "[]"}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
+	assert.True(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "rate limited")
 	assert.Contains(t, err.Error(), "posting review comment")
 }
@@ -171,9 +181,10 @@ func TestEngine_Review_DraftPRError_Propagates(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.AutoDraftPR = true
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
 	require.Error(t, err)
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "forbidden")
 	assert.Contains(t, err.Error(), "creating draft PR")
 }
@@ -183,7 +194,7 @@ func TestEngine_Review_ComparisonTooLarge_PostsSkipComment(t *testing.T) {
 	gh.diffErr = ghub.ErrComparisonTooLarge
 	ai := &mockAI{response: "[]"}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.NoError(t, err)
 
@@ -199,9 +210,10 @@ func TestEngine_Review_ComparisonTooLarge_SkipCommentFails(t *testing.T) {
 	gh.commentPostErr = errors.New("rate limited")
 	ai := &mockAI{}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	require.Error(t, err)
+	assert.False(t, ShouldPostFailureComment(err))
 	assert.Contains(t, err.Error(), "posting skipped review comment")
 	assert.Equal(t, 0, ai.calls)
 }
@@ -212,11 +224,96 @@ func TestEngine_Review_PromptBudgetExhausted(t *testing.T) {
 	gh.issue.Body = strings.Repeat("body ", 30000)
 	ai := &mockAI{response: "[]"}
 
-	engine := NewEngine(ai)
+	engine := NewEngine(orProvider(ai))
 	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
 	// The issue body is huge but truncated; diffs should still fit.
 	// This test verifies the prompt pipeline handles large bodies gracefully.
 	require.NoError(t, err)
+}
+
+func TestEngine_Review_SelectsProviderFromConfig(t *testing.T) {
+	gh := baseGitHub()
+	orMock := &mockAI{response: "[]"}
+	brMock := &mockAI{response: `[{"severity":"Bug","file":"x.go","line":1,"description":"bedrock found it"}]`}
+
+	engine := NewEngine(map[config.Provider]AIClient{config.ProviderOpenRouter: orMock, config.ProviderBedrock: brMock})
+
+	cfg := config.Defaults()
+	cfg.Provider = config.ProviderBedrock
+
+	err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 0, orMock.calls)
+	assert.Equal(t, 1, brMock.calls)
+	assert.Contains(t, gh.commentPosted, "bedrock found it")
+	assert.Equal(t, cfg.Model, brMock.lastReq.Model)
+	assert.NotEmpty(t, brMock.lastReq.Messages)
+}
+
+func TestEngine_Review_UnconfiguredProvider(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider config.Provider
+		contain  []string
+	}{
+		{"unknown", "unknown", []string{"unknown", "provider"}},
+		{"missing", config.ProviderBedrock, []string{"bedrock", "not configured"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := baseGitHub()
+			mock := &mockAI{response: "[]"}
+			engine := NewEngine(orProvider(mock))
+
+			cfg := config.Defaults()
+			cfg.Provider = tt.provider
+
+			err := engine.Review(context.Background(), gh, basePush(), 42, cfg)
+			require.Error(t, err)
+			for _, s := range tt.contain {
+				assert.Contains(t, err.Error(), s)
+			}
+		})
+	}
+}
+
+func TestNewEngine_PanicsOnEmptyProviders(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: at least one AI provider is required", func() {
+		NewEngine(map[config.Provider]AIClient{})
+	})
+}
+
+func TestNewEngine_PanicsOnNilMap(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: at least one AI provider is required", func() {
+		NewEngine(nil)
+	})
+}
+
+func TestNewEngine_PanicsOnNilProvider(t *testing.T) {
+	assert.Panics(t, func() {
+		NewEngine(map[config.Provider]AIClient{config.ProviderOpenRouter: nil})
+	})
+}
+
+func TestNewEngine_PanicsOnInvalidProviderKey(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: invalid provider key typo", func() {
+		NewEngine(map[config.Provider]AIClient{config.Provider("typo"): &mockAI{}})
+	})
+}
+
+func TestNewEngine_DefensiveMapCopy(t *testing.T) {
+	mock := &mockAI{response: "[]"}
+	providers := map[config.Provider]AIClient{config.ProviderOpenRouter: mock}
+	engine := NewEngine(providers)
+
+	// Mutate original map after construction.
+	delete(providers, config.ProviderOpenRouter)
+
+	// Engine should still work with the original provider.
+	gh := baseGitHub()
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.NoError(t, err)
+	assert.Equal(t, 1, mock.calls)
 }
 
 // Ensure mockGitHub satisfies GitHubClient at compile time.

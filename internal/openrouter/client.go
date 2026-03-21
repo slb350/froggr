@@ -9,12 +9,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
+
+	"github.com/slb350/froggr/internal/ai"
 )
 
 const (
-	defaultEndpoint    = "https://openrouter.ai/api/v1/chat/completions"
-	defaultHTTPTimeout = 120 * time.Second
+	defaultEndpoint = "https://openrouter.ai/api/v1/chat/completions"
 	// maxResponseBytes prevents a runaway response from exhausting memory.
 	// 2 MB is well above any reasonable code review response.
 	maxResponseBytes = 2 * 1024 * 1024
@@ -27,34 +27,31 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// NewClient creates an OpenRouter API client.
-func NewClient(apiKey string) *Client {
+// NewClient creates an OpenRouter API client. Returns an error if apiKey is empty.
+func NewClient(apiKey string) (*Client, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
+	}
 	return &Client{
 		apiKey:     apiKey,
 		endpoint:   defaultEndpoint,
-		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
-	}
+		httpClient: &http.Client{Timeout: ai.DefaultHTTPTimeout},
+	}, nil
 }
 
 // setEndpoint overrides the API endpoint (for testing).
 func (c *Client) setEndpoint(url string) { c.endpoint = url }
 
-// Message represents a single chat message.
-type Message struct {
+// wireMessage is the OpenAI-compatible message format for the wire.
+type wireMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// CompletionRequest holds the parameters for a chat completion call.
-type CompletionRequest struct {
-	Model    string
-	Messages []Message
-}
-
 // chatCompletionRequest is the OpenAI-compatible wire format.
 type chatCompletionRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
 }
 
 // chatCompletionResponse is the OpenAI-compatible response format.
@@ -64,7 +61,7 @@ type chatCompletionResponse struct {
 }
 
 type choice struct {
-	Message Message `json:"message"`
+	Message wireMessage `json:"message"`
 }
 
 type apiError struct {
@@ -102,9 +99,9 @@ func (c *apiErrorCode) UnmarshalJSON(data []byte) error {
 }
 
 // Complete sends a chat completion request and returns the response content.
-func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, error) {
-	if c.apiKey == "" {
-		return "", fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
+func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
+	if err := req.Validate(); err != nil {
+		return "", fmt.Errorf("OpenRouter: %w", err)
 	}
 
 	respBody, err := c.doRequest(ctx, req)
@@ -116,8 +113,12 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, e
 }
 
 // doRequest builds, sends, and reads the HTTP request/response.
-func (c *Client) doRequest(ctx context.Context, req CompletionRequest) ([]byte, error) {
-	reqJSON, err := json.Marshal(chatCompletionRequest(req))
+func (c *Client) doRequest(ctx context.Context, req ai.CompletionRequest) ([]byte, error) {
+	msgs := make([]wireMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = wireMessage{Role: string(m.Role), Content: m.Content}
+	}
+	reqJSON, err := json.Marshal(chatCompletionRequest{Model: req.Model, Messages: msgs})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
@@ -193,11 +194,11 @@ func formatHTTPError(statusCode int, respBody []byte) error {
 			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, detail)
 		}
 		if len(respBody) > 0 {
-			b := respBody
-			if len(b) > 200 {
-				b = b[:200]
+			runes := []rune(string(respBody))
+			if len(runes) > 200 {
+				runes = runes[:200]
 			}
-			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, strings.TrimSpace(string(b)))
+			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, strings.TrimSpace(string(runes)))
 		}
 		return fmt.Errorf("OpenRouter API error (status %d)", statusCode)
 	}

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/slb350/froggr/internal/bedrock"
+	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
 	"github.com/slb350/froggr/internal/openrouter"
 	"github.com/slb350/froggr/internal/review"
@@ -27,6 +29,18 @@ const (
 	// shutdownTimeout is the maximum time to wait for in-flight HTTP requests
 	// to complete during graceful shutdown.
 	shutdownTimeout = 10 * time.Second
+	// providerInitTimeout bounds AWS credential chain discovery so startup
+	// doesn't hang when IMDS is unreachable (e.g. running locally).
+	providerInitTimeout = 15 * time.Second
+)
+
+var (
+	newOpenRouterClient = func(apiKey string) (review.AIClient, error) {
+		return openrouter.NewClient(apiKey)
+	}
+	newBedrockClient = func(ctx context.Context, region string) (review.AIClient, error) {
+		return bedrock.NewClient(ctx, region)
+	}
 )
 
 func main() {
@@ -46,16 +60,24 @@ func main() {
 	}
 
 	webhookSecret := requireEnv("GITHUB_WEBHOOK_SECRET")
-	openrouterKey := requireEnv("OPENROUTER_API_KEY")
 	port := envOr("PORT", defaultPort)
 
 	clientFactory := func(installationID int64) review.GitHubClient {
 		return ghub.NewClient(appAuth.ClientForInstallation(installationID))
 	}
 
-	aiClient := openrouter.NewClient(openrouterKey)
-	engine := review.NewEngine(aiClient)
-	handler := server.NewHandler(clientFactory, engine, debounceWindow, logger)
+	providers, err := buildProviders(logger)
+	if err != nil {
+		logger.Error("failed to initialize AI providers", "error", err)
+		os.Exit(1)
+	}
+	if len(providers) == 0 {
+		logger.Error("no AI providers configured: set OPENROUTER_API_KEY and/or AWS_REGION")
+		os.Exit(1)
+	}
+	engine := review.NewEngine(providers)
+	defaultConfig := config.DefaultsForProviders(configuredProviders(providers)...)
+	handler := server.NewHandler(clientFactory, engine, defaultConfig, debounceWindow, logger)
 	srv := server.NewServer(handler, []byte(webhookSecret), logger)
 
 	httpSrv := &http.Server{
@@ -107,4 +129,85 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+// buildProviders creates AI clients from available environment variables.
+// Returns an empty map if no providers are configured; the caller must
+// enforce the minimum.
+func buildProviders(logger *slog.Logger) (map[config.Provider]review.AIClient, error) {
+	providers := make(map[config.Provider]review.AIClient)
+	var initErrs []error
+
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+		if err := registerProvider(logger, providers, config.ProviderOpenRouter, func() (review.AIClient, error) {
+			return newOpenRouterClient(key)
+		}); err != nil {
+			initErrs = append(initErrs, err)
+		}
+	}
+
+	if region := awsRegion(); region != "" {
+		if err := registerProvider(logger, providers, config.ProviderBedrock, func() (review.AIClient, error) {
+			initCtx, initCancel := context.WithTimeout(context.Background(), providerInitTimeout)
+			client, err := newBedrockClient(initCtx, region)
+			initCancel()
+			return client, err
+		}, "region", region); err != nil {
+			initErrs = append(initErrs, err)
+		}
+	}
+
+	if len(providers) > 0 {
+		return providers, nil
+	}
+	if len(initErrs) > 0 {
+		return nil, errors.Join(initErrs...)
+	}
+	return providers, nil
+}
+
+// awsRegion returns the configured AWS region from environment variables.
+func awsRegion() string {
+	if r := os.Getenv("AWS_REGION"); r != "" {
+		return r
+	}
+	return os.Getenv("AWS_DEFAULT_REGION")
+}
+
+func configuredProviders(providers map[config.Provider]review.AIClient) []config.Provider {
+	keys := make([]config.Provider, 0, len(providers))
+	for provider := range providers {
+		keys = append(keys, provider)
+	}
+	return keys
+}
+
+func registerProvider(
+	logger *slog.Logger,
+	providers map[config.Provider]review.AIClient,
+	provider config.Provider,
+	init func() (review.AIClient, error),
+	extraLogAttrs ...any,
+) error {
+	client, err := init()
+	if err != nil {
+		initErr := fmt.Errorf("initializing %s client: %w", providerDisplayName(provider), err)
+		logAttrs := append([]any{"provider", provider, "error", err}, extraLogAttrs...)
+		logger.Warn("failed to initialize AI provider", logAttrs...)
+		return initErr
+	}
+
+	providers[provider] = client
+	logAttrs := append([]any{"provider", provider}, extraLogAttrs...)
+	logger.Info("registered AI provider", logAttrs...)
+	return nil
+}
+
+func providerDisplayName(provider config.Provider) string {
+	switch provider {
+	case config.ProviderBedrock:
+		return "Bedrock"
+	default:
+		return "OpenRouter"
+	}
 }

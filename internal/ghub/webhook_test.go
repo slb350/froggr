@@ -57,6 +57,11 @@ func TestValidateAndParse_InvalidSignature(t *testing.T) {
 	_, _, err := ValidateAndParse(req, []byte(testSecret))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signature")
+
+	var sigErr *SignatureError
+	require.ErrorAs(t, err, &sigErr)
+	assert.NotNil(t, sigErr.Unwrap(), "Unwrap should return the inner error")
+	assert.Contains(t, sigErr.Unwrap().Error(), "signature")
 }
 
 func TestValidateAndParse_MissingSignature(t *testing.T) {
@@ -69,6 +74,9 @@ func TestValidateAndParse_MissingSignature(t *testing.T) {
 
 	_, _, err = ValidateAndParse(req, []byte(testSecret))
 	require.Error(t, err)
+
+	var sigErr *SignatureError
+	assert.ErrorAs(t, err, &sigErr)
 }
 
 func TestExtractPushContext_ValidEvent(t *testing.T) {
@@ -105,6 +113,26 @@ func TestExtractPushContext_TagPush(t *testing.T) {
 	assert.Contains(t, err.Error(), "tag")
 }
 
+func TestExtractPushContext_DeletedBranchPush(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "0000000000000000000000000000000000000000",
+		"deleted": true,
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "deleted branch")
+}
+
 func TestExtractPushContext_DefaultBranch(t *testing.T) {
 	payload := []byte(`{
 		"ref": "refs/heads/main",
@@ -123,6 +151,78 @@ func TestExtractPushContext_DefaultBranch(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "main", ctx.Branch)
 	assert.Equal(t, "main", ctx.DefaultBranch)
+}
+
+func TestExtractPushContext_MissingInstallationID(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "installation ID")
+}
+
+func TestExtractPushContext_MissingRepoName(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repository name")
+}
+
+func TestExtractPushContext_MissingHeadSHA(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "head SHA")
+}
+
+func TestExtractPushContext_MissingDefaultBranch(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"}
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default branch")
 }
 
 // --- test fixtures ---

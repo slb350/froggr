@@ -1,6 +1,7 @@
 package review
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -59,6 +60,17 @@ func TestFormatCleanComment(t *testing.T) {
 
 	assert.Contains(t, comment, "clean")
 	assert.NotContains(t, comment, "Bug")
+}
+
+func TestFormatFailedComment(t *testing.T) {
+	push := ghub.PushContext{Branch: "42-feature", HeadSHA: "abc1234567890"}
+	comment := FormatFailedComment(push, errors.New("AI provider timeout"))
+
+	assert.Contains(t, comment, "42-feature")
+	assert.Contains(t, comment, "abc1234")
+	assert.Contains(t, comment, "Review failed")
+	assert.Contains(t, comment, "AI provider timeout")
+	assert.Contains(t, comment, "Push again to retry")
 }
 
 func TestFormatSkippedComment(t *testing.T) {

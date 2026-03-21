@@ -35,9 +35,11 @@ branch_pattern: "^(\\d+)-"   # how to extract issue number from branch name
 auto_draft_pr: true
 ignore_paths:
   - "*.lock"
+  - ".env*"
   - "vendor/**"
   - "generated/**"
-model: "anthropic/claude-sonnet-4"  # any OpenRouter model ID
+provider: "openrouter"                # "openrouter" or "bedrock"
+model: "anthropic/claude-sonnet-4.6"  # any model ID on the chosen provider
 ```
 
 Missing config falls back to defaults. Other config fetch failures do not.
@@ -52,7 +54,7 @@ GitHub ──webhooks──> Webhook Server ──> Review Queue ──> Review 
                           |              (debounce)           |
                           |                                   |-- fetch diff via GitHub API
                           |                                   |-- build review context
-                          |                                   |-- call OpenRouter API
+                          |                                   |-- call AI provider (OpenRouter / Bedrock)
                           |                                   |-- format + post results
                           |                                   |
                           |--- GitHub API <--------------------+
@@ -65,7 +67,7 @@ GitHub ──webhooks──> Webhook Server ──> Review Queue ──> Review 
 |-----------|---------------|
 | **Webhook Handler** | Receives GitHub events, validates HMAC signatures, routes to handlers |
 | **Debounce Buffer** | Collapses rapid pushes (30s window) into a single review |
-| **Review Worker** | Builds review context, calls AI via OpenRouter, parses response |
+| **Review Worker** | Builds review context, calls AI provider (OpenRouter or Bedrock), parses response |
 | **GitHub Client** | Posts issue comments, creates draft PRs, reads issues and file content |
 
 ### Webhook Events
@@ -89,7 +91,7 @@ GitHub ──webhooks──> Webhook Server ──> Review Queue ──> Review 
    c. Issue title + body (developer's intent)
    d. Previous froggr comments on the issue (to track resolved items)
 6. Build prompt with all context
-7. Call OpenRouter API with configured model
+7. Call AI provider (OpenRouter or Bedrock) with configured model
 8. Parse response into structured findings
 9. Post issue comment with findings
 10. If no issues found AND auto_draft_pr is enabled:
@@ -194,33 +196,50 @@ being treated as a successful clean review.
 
 On subsequent reviews, froggr compares new findings against previous comments. If an issue was flagged in a prior review and no longer appears in the code, it's marked as resolved. This prevents noise from repeating fixed issues and gives the developer a clear sense of progress.
 
-## OpenRouter Integration
+## AI Provider Integration
 
-froggr uses [OpenRouter](https://openrouter.ai) as its AI gateway. This gives users the freedom to choose any model — they're not locked into a single provider.
+froggr supports multiple AI providers. Each repo selects its provider via the
+`provider` field in `.froggr.yml`, or it is auto-detected from the model ID
+format. OpenRouter uses provider/model IDs with a slash. Bedrock uses dotted
+model IDs or ARN-based model refs accepted by Converse. If a repo omits both
+`provider` and `model`, froggr falls back to provider-aware server defaults:
+OpenRouter when configured, otherwise Bedrock in Bedrock-only installs.
+Provider-agnostic types live in `internal/ai/`; provider-specific logic is
+encapsulated in `internal/openrouter/` and `internal/bedrock/`.
 
-### Why OpenRouter
+### OpenRouter (default)
+
+froggr uses [OpenRouter](https://openrouter.ai) as its default AI gateway. This gives users the freedom to choose any model — they're not locked into a single provider.
 
 - **Model choice**: Claude, GPT-4, Gemini, Llama, Mistral, DeepSeek, and more
 - **Single integration**: One SDK, one API key, access to all providers
 - **Fallback routing**: OpenRouter can automatically fall back if a provider is down
 - **Cost transparency**: Users see per-model pricing and choose their cost/quality tradeoff
 
-### Configuration
-
-Users set their preferred model in `.froggr.yml`:
-
 ```yaml
-# Fast and cheap for most reviews
-model: "anthropic/claude-sonnet-4"
-
-# Thorough for security-critical repos
-model: "anthropic/claude-opus-4"
-
-# Budget-friendly alternative
-model: "google/gemini-2.5-pro"
+model: "anthropic/claude-sonnet-4.6" # OpenRouter model IDs contain a slash
 ```
 
-The OpenRouter API key is configured at the GitHub App level (managed by froggr's hosted service) or provided by the user for self-hosted deployments.
+### AWS Bedrock
+
+froggr also supports AWS Bedrock via the Converse API, using the standard AWS
+credential chain. The Bedrock client separates system messages into Bedrock's
+dedicated `System` field automatically.
+
+```yaml
+provider: bedrock
+model: anthropic.claude-sonnet-4-6   # Bedrock model IDs often contain a dot
+```
+
+Bedrock `model` may also be an ARN-based Converse `modelId`, such as an
+inference profile, prompt version, provisioned/custom model, or marketplace
+endpoint ARN.
+
+### Configuration
+
+Users set their preferred model in `.froggr.yml`. The API key (OpenRouter) or
+AWS credentials (Bedrock) are configured at the server level via environment
+variables.
 
 ## Tech Stack
 
@@ -228,7 +247,7 @@ The OpenRouter API key is configured at the GitHub App level (managed by froggr'
 |-------|--------|-----------|
 | Language | Go | Small binary, fast startup, strong concurrency, good GitHub libraries |
 | Hosting | Fly.io or Railway | Single container, no infra management |
-| AI Gateway | OpenRouter SDK | Model-agnostic, single integration point |
+| AI Providers | OpenRouter + AWS Bedrock | Model-agnostic via provider map; users choose per-repo |
 | Queue | In-process goroutine + channel | No external dependencies for MVP |
 | Database | None | Stateless — GitHub is the source of truth |
 | Auth | GitHub App JWT -> installation tokens | Standard GitHub App authentication flow |
@@ -239,7 +258,7 @@ The OpenRouter API key is configured at the GitHub App level (managed by froggr'
 - **Token scoping**: Installation tokens are limited to repos that installed the app
 - **No code persistence**: Code is fetched via API, reviewed in memory, then discarded
 - **Code sent to AI provider**: Same trust model as GitHub Copilot, Greptile, or CodeRabbit — users opt in by installing the app
-- **Secrets protection**: Respects `.gitignore` and `ignore_paths` — never sends lockfiles, env files, or generated code to the model
+- **Secrets protection**: Built-in defaults skip lockfiles, env files, vendor, and generated code; repos can extend that via `ignore_paths`
 
 ## Post-MVP Roadmap
 

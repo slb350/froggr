@@ -10,20 +10,22 @@ import (
 
 const shortSHALen = 7
 
+// writeHeader writes the standard froggr review comment header.
+func writeHeader(b *strings.Builder, push ghub.PushContext) {
+	fmt.Fprintf(b, "## froggr review: `%s` @ `%s`\n\n", push.Branch, shortSHA(push.HeadSHA))
+}
+
 // FormatComment formats a Result as a GitHub markdown comment.
 func FormatComment(result Result, push ghub.PushContext) string {
-	shortSHA := shortSHA(push.HeadSHA)
-
 	var b strings.Builder
+	writeHeader(&b, push)
 
 	if result.IsClean {
-		fmt.Fprintf(&b, "## froggr review: `%s` @ `%s`\n\n", push.Branch, shortSHA)
 		b.WriteString("All clean! No bugs, security issues, or concerns found.\n\n")
 		b.WriteString("This branch looks ready for a PR.\n")
 		return b.String()
 	}
 
-	fmt.Fprintf(&b, "## froggr review: `%s` @ `%s`\n\n", push.Branch, shortSHA)
 	fmt.Fprintf(&b, "Found **%d** issue(s). Push fixes and I'll review again.\n\n", len(result.Findings))
 
 	// Sort: bugs first, then concerns.
@@ -43,12 +45,19 @@ func FormatComment(result Result, push ghub.PushContext) string {
 // FormatSkippedComment explains why froggr deliberately skipped a review.
 func FormatSkippedComment(push ghub.PushContext, reason string) string {
 	var b strings.Builder
-
-	fmt.Fprintf(&b, "## froggr review: `%s` @ `%s`\n\n", push.Branch, shortSHA(push.HeadSHA))
+	writeHeader(&b, push)
 	b.WriteString("Review skipped.\n\n")
 	b.WriteString(reason)
 	b.WriteString("\n")
+	return b.String()
+}
 
+// FormatFailedComment explains that froggr attempted but failed to review a push.
+func FormatFailedComment(push ghub.PushContext, reviewErr error) string {
+	var b strings.Builder
+	writeHeader(&b, push)
+	fmt.Fprintf(&b, "Review failed: %s\n\n", reviewErr)
+	b.WriteString("Push again to retry.\n")
 	return b.String()
 }
 

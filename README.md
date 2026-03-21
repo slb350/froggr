@@ -41,21 +41,32 @@ branch_pattern: "^(\\d+)-"   # extract issue number from branch name
 auto_draft_pr: true           # open draft PR when review is clean
 ignore_paths:
   - "*.lock"
+  - ".env*"
   - "vendor/**"
   - "generated/**"
 
-# Any model available on OpenRouter
-# See: https://openrouter.ai/models
+# AI provider: "openrouter" or "bedrock"
+# If omitted, froggr uses the server's default provider:
+# OpenRouter when configured, otherwise Bedrock in Bedrock-only installs.
+# Auto-detected from model ID if omitted and model is set.
+# OpenRouter uses provider/model IDs with a slash.
+# Bedrock uses dotted model IDs or ARN-based model refs accepted by Converse.
+provider: "openrouter"
+
+# Any model available on your chosen provider
 model: "anthropic/claude-sonnet-4.6"
 ```
 
-If `.froggr.yml` is missing, froggr uses defaults. If GitHub cannot read the
-file for some other reason, froggr skips the review rather than silently
-changing review policy.
+If `.froggr.yml` is missing, froggr uses provider-aware defaults. OpenRouter is
+preferred when configured; Bedrock becomes the default in Bedrock-only
+deployments. If GitHub cannot read the file for some other reason, froggr skips
+the review rather than silently changing review policy.
+
+### OpenRouter (default)
 
 froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use any model — Claude, GPT-5, Gemini 3, Qwen 3.5, MiniMax, or whatever suits your codebase and budget.
 
-**Popular models for code review:**
+**Popular OpenRouter models for code review:**
 - `anthropic/claude-sonnet-4.6` — strong reasoning, good cost/quality balance (default)
 - `anthropic/claude-opus-4.6` — best quality, higher cost
 - `openai/gpt-5.3-codex` — purpose-built for code
@@ -63,16 +74,35 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 - `qwen/qwen3.5-397b-a17b` — massive 397B MoE, top-tier reasoning
 - `minimax/minimax-m2.7` — fast, strong general reasoning
 
+### AWS Bedrock
+
+froggr also supports AWS Bedrock as an AI provider, using the Converse API with the standard AWS credential chain.
+
+```yaml
+# .froggr.yml — Bedrock example
+provider: bedrock
+model: anthropic.claude-sonnet-4-6
+```
+
+Bedrock `model` may also be an ARN-based Converse `modelId`, such as an
+inference profile, prompt version, provisioned/custom model, or marketplace
+endpoint ARN.
+
+**Popular Bedrock models for code review:**
+- `anthropic.claude-sonnet-4-6` — Sonnet 4.6
+- `anthropic.claude-opus-4-6-v1` — Opus 4.6
+- `anthropic.claude-haiku-4-5-20251001-v1:0` — Haiku 4.5
+
 ## Self-Hosting
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) with:
   - Webhook URL pointing to your server's `/webhook` endpoint
   - Permissions: Issues (read/write), Pull requests (read/write), Contents (read)
   - Events: Push, Issues
-- An [OpenRouter API key](https://openrouter.ai/keys)
+- An [OpenRouter API key](https://openrouter.ai/keys) and/or AWS credentials for [Bedrock](https://aws.amazon.com/bedrock/) (at least one AI provider required)
 
 ### Environment Variables
 
@@ -81,8 +111,14 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 | `GITHUB_APP_ID` | Yes | Your GitHub App's ID |
 | `GITHUB_PRIVATE_KEY` | Yes | PEM-encoded private key for the GitHub App |
 | `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for webhook signature validation |
-| `OPENROUTER_API_KEY` | Yes | API key for OpenRouter |
+| `OPENROUTER_API_KEY` | If using OpenRouter | API key for OpenRouter |
+| `AWS_REGION` | If using Bedrock | AWS region for Bedrock (e.g. `us-west-2`); `AWS_DEFAULT_REGION` is also accepted as a fallback |
 | `PORT` | No | Server port (default: `8080`) |
+
+At least one AI provider must be configured (`OPENROUTER_API_KEY` or
+`AWS_REGION`). Repos that omit `provider`/`model` inherit defaults from the AI
+providers available on the server. Bedrock uses the standard AWS credential
+chain (env vars, `~/.aws/credentials`, IAM roles).
 
 ### Run
 
@@ -101,7 +137,9 @@ froggr exposes two endpoints:
 
 Review runs are bounded. GitHub API calls use a client timeout, and in-flight
 reviews are canceled during shutdown so a stalled upstream cannot hang the
-service indefinitely.
+service indefinitely. If a review fails (AI timeout, rate limit, etc.), froggr
+posts a "Review failed" comment on the issue so the developer knows what
+happened and can push again to retry.
 
 Model output is validated strictly. froggr only accepts an explicit empty JSON
 array for a clean review or structured findings it can validate; malformed or
@@ -127,6 +165,8 @@ just check
 
 ```
 cmd/froggr/          → entry point, dependency wiring
+internal/ai/         → provider-agnostic AI types (Message, CompletionRequest)
+internal/bedrock/    → AWS Bedrock Converse API client
 internal/config/     → .froggr.yml parsing, branch pattern matching
 internal/openrouter/ → OpenRouter chat completion HTTP client
 internal/ghub/       → GitHub App auth, webhook parsing, API client
@@ -142,8 +182,8 @@ froggr keeps review context deliberately bounded so large pushes stay fast and
 predictable instead of timing out or relying on provider-side truncation.
 
 - It fetches at most 25 changed-file contexts per review
-- It includes at most the 5 most recent prior froggr reviews
-- It truncates oversized issue bodies, patches, file contents, and prior review text
+- It includes at most the 5 most recent prior froggr reviews (excluding failed/skipped reviews that add no useful context)
+- It truncates oversized issue bodies, patches, file contents, and prior review text with UTF-8-safe byte budgeting
 - It caps the final model prompt at a fixed size and tells the model when context was omitted
 
 This is an explicit tradeoff: on very large pushes, froggr prefers a smaller,

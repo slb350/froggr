@@ -16,11 +16,16 @@ import (
 
 const froggrConfigPath = ".froggr.yml"
 
-// reviewTimeout bounds each AI review call so a stalled upstream (OpenRouter
+// reviewTimeout bounds each AI review call so a stalled upstream (AI provider
 // or GitHub) cannot block the handler goroutine indefinitely. The underlying
-// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter),
-// so this acts as an outer safety net.
+// HTTP clients have their own shorter per-request timeouts; this acts as an
+// outer safety net.
 const reviewTimeout = 3 * time.Minute
+
+// failureCommentTimeout bounds how long we wait to post a "review failed"
+// comment after a review error. Uses h.ctx (not the expired reviewCtx) so
+// it works even when the review timed out — the most important case.
+const failureCommentTimeout = 30 * time.Second
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
 type ClientFactory func(installationID int64) review.GitHubClient
@@ -31,9 +36,8 @@ type ReviewRunner interface {
 }
 
 // issueRef identifies an issue in a specific repository, used as the key in
-// the issueBranches reverse-lookup map. When HandleIssuesClosed is called, we
-// need to find the debounce.Key (which contains the branch name) from just the
-// issue number — this mapping provides that reverse lookup.
+// the issueBranches reverse-lookup map. Each issue can have multiple pending
+// branch reviews, so the map stores a set of debounce keys per issue.
 type issueRef struct {
 	owner string
 	repo  string
@@ -52,21 +56,22 @@ type pushData struct {
 // It loads repo configuration, matches branches to issues,
 // debounces rapid pushes, and triggers AI code reviews.
 type Handler struct {
-	clients ClientFactory
-	engine  ReviewRunner
-	buf     *debounce.Buffer
-	logger  *slog.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
+	clients       ClientFactory
+	engine        ReviewRunner
+	buf           *debounce.Buffer
+	logger        *slog.Logger
+	ctx           context.Context
+	cancel        context.CancelFunc
+	defaultConfig config.Config
 
 	mu            sync.Mutex
-	issueBranches map[issueRef]debounce.Key
+	issueBranches map[issueRef]map[debounce.Key]struct{}
 	stopOnce      sync.Once
 }
 
 // NewHandler creates a Handler with the given dependencies.
 // The debounce buffer is created internally with the provided window duration.
-func NewHandler(clients ClientFactory, engine ReviewRunner, debounceWindow time.Duration, logger *slog.Logger) *Handler {
+func NewHandler(clients ClientFactory, engine ReviewRunner, defaultConfig config.Config, debounceWindow time.Duration, logger *slog.Logger) *Handler {
 	reviewCtx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel is stored in Handler and called via Stop()
 	h := &Handler{
 		clients:       clients,
@@ -74,7 +79,8 @@ func NewHandler(clients ClientFactory, engine ReviewRunner, debounceWindow time.
 		logger:        logger,
 		ctx:           reviewCtx,
 		cancel:        cancel,
-		issueBranches: make(map[issueRef]debounce.Key),
+		defaultConfig: defaultConfig,
+		issueBranches: make(map[issueRef]map[debounce.Key]struct{}),
 	}
 	h.buf = debounce.NewBuffer(debounceWindow, h.onDebounce)
 	return h
@@ -91,7 +97,7 @@ func (h *Handler) HandlePush(ctx context.Context, push ghub.PushContext) {
 	gh := h.clients(push.InstallationID)
 	cfg, err := h.loadConfig(ctx, gh, push)
 	if err != nil {
-		h.logger.Warn("skipping review because repo config could not be loaded",
+		h.logger.Error("skipping review because repo config could not be loaded",
 			"error", err,
 			"branch", push.Branch,
 			"repo", push.Owner+"/"+push.Repo,
@@ -106,10 +112,9 @@ func (h *Handler) HandlePush(ctx context.Context, push ghub.PushContext) {
 	}
 
 	key := debounce.Key{Owner: push.Owner, Repo: push.Repo, Branch: push.Branch}
+	ref := issueRef{owner: push.Owner, repo: push.Repo, issue: issueNum}
 
-	h.mu.Lock()
-	h.issueBranches[issueRef{owner: push.Owner, repo: push.Repo, issue: issueNum}] = key
-	h.mu.Unlock()
+	h.trackIssueBranch(ref, key)
 
 	h.buf.Push(key, pushData{gh: gh, push: push, issueNum: issueNum, cfg: cfg})
 	h.logger.Info("queued review", "branch", push.Branch, "issue", issueNum)
@@ -118,16 +123,11 @@ func (h *Handler) HandlePush(ctx context.Context, push ghub.PushContext) {
 // HandleIssuesClosed cancels any pending review for the given issue.
 func (h *Handler) HandleIssuesClosed(owner, repo string, issueNum int) {
 	ref := issueRef{owner: owner, repo: repo, issue: issueNum}
-
-	h.mu.Lock()
-	key, ok := h.issueBranches[ref]
-	if ok {
-		delete(h.issueBranches, ref)
-	}
-	h.mu.Unlock()
-
-	if ok {
-		h.buf.Cancel(key)
+	keys := h.untrackIssue(ref)
+	if len(keys) > 0 {
+		for _, key := range keys {
+			h.buf.Cancel(key)
+		}
 		h.logger.Info("canceled review for closed issue", "issue", issueNum)
 	}
 }
@@ -142,49 +142,106 @@ func (h *Handler) Stop() {
 }
 
 // onDebounce is called when the debounce window expires for a push.
-func (h *Handler) onDebounce(_ debounce.Key, data any) {
+func (h *Handler) onDebounce(key debounce.Key, data any) {
 	pd, ok := data.(pushData)
 	if !ok {
 		h.logger.Error("unexpected data type in debounce callback", "type", fmt.Sprintf("%T", data))
 		return
 	}
 
-	h.mu.Lock()
-	delete(h.issueBranches, issueRef{owner: pd.push.Owner, repo: pd.push.Repo, issue: pd.issueNum})
-	h.mu.Unlock()
+	h.untrackIssueBranch(issueRef{owner: pd.push.Owner, repo: pd.push.Repo, issue: pd.issueNum}, key)
 
 	reviewCtx, cancel := context.WithTimeout(h.ctx, reviewTimeout)
 	defer cancel()
 
 	h.logger.Info("starting review", "branch", pd.push.Branch, "issue", pd.issueNum)
 	if err := h.engine.Review(reviewCtx, pd.gh, pd.push, pd.issueNum, pd.cfg); err != nil {
+		if !review.ShouldPostFailureComment(err) {
+			h.logger.Warn("review error suppressed from failure comment",
+				"error", err,
+				"branch", pd.push.Branch,
+				"issue", pd.issueNum,
+			)
+			return
+		}
 		h.logger.Error("review failed",
 			"error", err,
 			"branch", pd.push.Branch,
 			"issue", pd.issueNum,
 		)
+		// Use h.ctx (not reviewCtx) so the comment post works even when the
+		// review timed out. If the handler is shutting down (h.ctx cancelled),
+		// the post fails gracefully — we're exiting anyway.
+		notifyCtx, notifyCancel := context.WithTimeout(h.ctx, failureCommentTimeout)
+		defer notifyCancel()
+		comment := review.FormatFailedComment(pd.push, err)
+		if postErr := pd.gh.CreateIssueComment(notifyCtx, pd.push.Owner, pd.push.Repo, pd.issueNum, comment); postErr != nil {
+			h.logger.Error("failed to post review failure comment", "error", postErr)
+		}
 	}
 }
 
 // loadConfig fetches .froggr.yml from the repo and parses it.
-// Falls back to defaults only when the file is genuinely absent. Other fetch
-// failures are treated as unsafe because silently changing review policy is worse
-// than skipping a run.
+// Returns defaults only when the file is genuinely absent (404).
+// Invalid YAML and other fetch failures both return errors — froggr
+// skips the review rather than silently changing review policy.
 func (h *Handler) loadConfig(ctx context.Context, gh review.GitHubClient, push ghub.PushContext) (config.Config, error) {
 	fc, err := gh.GetFileContent(ctx, push.Owner, push.Repo, froggrConfigPath, push.HeadSHA)
 	if err != nil {
 		if ghub.IsNotFound(err) {
 			h.logger.Debug("no .froggr.yml found, using defaults")
-			return config.Defaults(), nil
+			return h.defaultConfig, nil
 		}
-		return config.Config{}, err
+		return config.Config{}, fmt.Errorf("fetching .froggr.yml: %w", err)
 	}
 
-	cfg, err := config.Parse([]byte(fc.Content))
+	cfg, err := config.ParseWithDefaults([]byte(fc.Content), h.defaultConfig)
 	if err != nil {
-		h.logger.Warn("invalid .froggr.yml, using defaults", "error", err)
-		return config.Defaults(), nil
+		return config.Config{}, fmt.Errorf("invalid .froggr.yml: %w", err)
 	}
 
 	return cfg, nil
+}
+
+func (h *Handler) trackIssueBranch(ref issueRef, key debounce.Key) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.issueBranches[ref] == nil {
+		h.issueBranches[ref] = make(map[debounce.Key]struct{})
+	}
+	h.issueBranches[ref][key] = struct{}{}
+}
+
+func (h *Handler) untrackIssue(ref issueRef) []debounce.Key {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	keys := h.issueBranches[ref]
+	if len(keys) == 0 {
+		return nil
+	}
+
+	delete(h.issueBranches, ref)
+
+	out := make([]debounce.Key, 0, len(keys))
+	for key := range keys {
+		out = append(out, key)
+	}
+	return out
+}
+
+func (h *Handler) untrackIssueBranch(ref issueRef, key debounce.Key) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	keys := h.issueBranches[ref]
+	if len(keys) == 0 {
+		return
+	}
+
+	delete(keys, key)
+	if len(keys) == 0 {
+		delete(h.issueBranches, ref)
+	}
 }

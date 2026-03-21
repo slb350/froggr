@@ -8,6 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testBedrockInferenceProfileARN = "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/cross-region-sonnet"
+	testMarketplaceEndpointARN     = "arn:aws:sagemaker:us-west-2:123456789012:endpoint/bedrock-marketplace-sonnet"
+)
+
 func TestParse_ValidConfig(t *testing.T) {
 	input := []byte(`
 branch_pattern: "^(\\d+)-"
@@ -203,5 +208,246 @@ func TestDefaults(t *testing.T) {
 	assert.NotNil(t, cfg.BranchPattern)
 	assert.True(t, cfg.AutoDraftPR)
 	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+	assert.Contains(t, cfg.IgnorePaths, ".env*")
 	assert.NotEmpty(t, cfg.IgnorePaths)
+}
+
+func TestDefaultsForProviders(t *testing.T) {
+	t.Run("prefers openrouter when available", func(t *testing.T) {
+		cfg := DefaultsForProviders(ProviderBedrock, ProviderOpenRouter)
+		assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+		assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+	})
+
+	t.Run("uses bedrock when it is the only provider", func(t *testing.T) {
+		cfg := DefaultsForProviders(ProviderBedrock)
+		assert.Equal(t, ProviderBedrock, cfg.Provider)
+		assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+	})
+}
+
+func TestParse_ExplicitProviderBedrock(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+model: anthropic.claude-sonnet-4-6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+}
+
+func TestParse_ExplicitProviderBedrock_AllowsBedrockRuntimeARNs(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+provider: bedrock
+model: "` + tt.model + `"
+`)
+			cfg, err := Parse(input)
+			require.NoError(t, err)
+			assert.Equal(t, ProviderBedrock, cfg.Provider)
+			assert.Equal(t, tt.model, cfg.Model)
+		})
+	}
+}
+
+func TestParse_ExplicitProviderOpenRouter(t *testing.T) {
+	input := []byte(`
+provider: openrouter
+model: anthropic/claude-sonnet-4.6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
+func TestParse_InvalidProvider(t *testing.T) {
+	input := []byte(`
+provider: azure
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestParse_AutoDetectBedrockFromModelID(t *testing.T) {
+	input := []byte(`
+model: anthropic.claude-sonnet-4-6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+}
+
+func TestParse_AutoDetectBedrockFromRuntimeARNs(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+model: "` + tt.model + `"
+`)
+			cfg, err := Parse(input)
+			require.NoError(t, err)
+			assert.Equal(t, ProviderBedrock, cfg.Provider)
+			assert.Equal(t, tt.model, cfg.Model)
+		})
+	}
+}
+
+func TestParse_AutoDetectOpenRouterFromModelID(t *testing.T) {
+	input := []byte(`
+model: anthropic/claude-sonnet-4.6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
+func TestParse_OpenRouterWithBedrockModel_ReturnsError(t *testing.T) {
+	// OpenRouter cannot use Bedrock-format model IDs (dot, no slash).
+	// Catch this at config parse time rather than at review time.
+	input := []byte(`
+provider: openrouter
+model: anthropic.claude-sonnet-4-6
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "openrouter")
+	assert.Contains(t, err.Error(), "OpenRouter model ID")
+}
+
+func TestParse_BedrockWithOpenRouterModel_ReturnsError(t *testing.T) {
+	// Bedrock cannot use OpenRouter-format model IDs (with slash).
+	// Catch this at config parse time rather than at review time.
+	input := []byte(`
+provider: bedrock
+model: anthropic/claude-sonnet-4.6
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bedrock")
+	assert.Contains(t, err.Error(), "Bedrock model ID")
+}
+
+func TestParse_OpenRouterWithBedrockRuntimeARN_ReturnsError(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+provider: openrouter
+model: "` + tt.model + `"
+`)
+			_, err := Parse(input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "openrouter")
+			assert.Contains(t, err.Error(), "OpenRouter model ID")
+		})
+	}
+}
+
+func TestProvider_Valid(t *testing.T) {
+	assert.True(t, ProviderOpenRouter.Valid())
+	assert.True(t, ProviderBedrock.Valid())
+	assert.False(t, Provider("azure").Valid())
+	assert.False(t, Provider("").Valid())
+}
+
+func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
+	cfg, err := Parse(nil)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
+func TestParse_SlashAndDot_PrefersOpenRouter(t *testing.T) {
+	// For non-ARN model IDs, slash still takes precedence over dot.
+	input := []byte(`
+model: custom-provider/model-v2.0
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
+func TestParse_AutoDetectBedrockFromVersionedModelID(t *testing.T) {
+	// Real-world Bedrock model IDs can contain colons (e.g. version suffixes).
+	input := []byte(`
+model: anthropic.claude-haiku-4-5-20251001-v1:0
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+}
+
+func TestParse_BedrockWithoutModel_UsesBedrockDefaultModel(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+}
+
+func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {
+	input := []byte(`
+model: gpt-4o
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot auto-detect provider")
+	assert.Contains(t, err.Error(), "gpt-4o")
+}
+
+func TestParseWithDefaults_EmptyContentUsesProvidedDefaults(t *testing.T) {
+	defaults := DefaultsForProvider(ProviderBedrock)
+
+	cfg, err := ParseWithDefaults(nil, defaults)
+	require.NoError(t, err)
+	assert.Equal(t, defaults.Provider, cfg.Provider)
+	assert.Equal(t, defaults.Model, cfg.Model)
+}
+
+func TestParseWithDefaults_ProviderOnlyUsesProviderSpecificDefaultModel(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+`)
+
+	cfg, err := ParseWithDefaults(input, Defaults())
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+}
+
+func TestParse_ExplicitEmptyIgnorePaths_OverridesDefaults(t *testing.T) {
+	input := []byte(`
+ignore_paths: []
+`)
+
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.IgnorePaths)
 }
