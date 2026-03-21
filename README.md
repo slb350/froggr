@@ -137,7 +137,9 @@ froggr exposes two endpoints:
 
 Review runs are bounded. GitHub API calls use a client timeout, and in-flight
 reviews are canceled during shutdown so a stalled upstream cannot hang the
-service indefinitely.
+service indefinitely. If a review fails (AI timeout, rate limit, etc.), froggr
+posts a "Review failed" comment on the issue so the developer knows what
+happened and can push again to retry.
 
 Model output is validated strictly. froggr only accepts an explicit empty JSON
 array for a clean review or structured findings it can validate; malformed or
@@ -180,8 +182,8 @@ froggr keeps review context deliberately bounded so large pushes stay fast and
 predictable instead of timing out or relying on provider-side truncation.
 
 - It fetches at most 25 changed-file contexts per review
-- It includes at most the 5 most recent prior froggr reviews
-- It truncates oversized issue bodies, patches, file contents, and prior review text
+- It includes at most the 5 most recent prior froggr reviews (excluding failed/skipped reviews that add no useful context)
+- It truncates oversized issue bodies, patches, file contents, and prior review text with UTF-8-safe byte budgeting
 - It caps the final model prompt at a fixed size and tells the model when context was omitted
 
 This is an explicit tradeoff: on very large pushes, froggr prefers a smaller,
