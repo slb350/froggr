@@ -102,7 +102,7 @@ func Parse(content []byte) (Config, error) {
 			return Config{}, fmt.Errorf("invalid provider %q: must be %q or %q", raw.Provider, ProviderOpenRouter, ProviderBedrock)
 		}
 		cfg.Provider = raw.Provider
-	} else {
+	} else if raw.Model != "" {
 		detected, err := detectProvider(cfg.Model)
 		if err != nil {
 			return Config{}, err

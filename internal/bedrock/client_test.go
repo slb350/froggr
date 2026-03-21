@@ -27,6 +27,7 @@ func (m *mockConverseAPI) Converse(ctx context.Context, input *bedrockruntime.Co
 
 func converseOutput(text string) *bedrockruntime.ConverseOutput {
 	return &bedrockruntime.ConverseOutput{
+		StopReason: types.StopReasonEndTurn,
 		Output: &types.ConverseOutputMemberMessage{
 			Value: types.Message{
 				Role: "assistant",
@@ -49,6 +50,7 @@ func TestComplete_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Review looks clean.", result)
 	assert.Equal(t, "anthropic.claude-sonnet-4-6", aws.ToString(mock.input.ModelId))
+	assert.Nil(t, mock.input.System)
 }
 
 func TestComplete_SystemMessageSeparation(t *testing.T) {
@@ -78,6 +80,7 @@ func TestComplete_SystemMessageSeparation(t *testing.T) {
 func TestComplete_EmptyResponse(t *testing.T) {
 	mock := &mockConverseAPI{
 		output: &bedrockruntime.ConverseOutput{
+			StopReason: types.StopReasonEndTurn,
 			Output: &types.ConverseOutputMemberMessage{
 				Value: types.Message{
 					Role:    "assistant",
@@ -161,7 +164,8 @@ func TestComplete_EmptyTextContent(t *testing.T) {
 func TestComplete_UnexpectedOutputType(t *testing.T) {
 	mock := &mockConverseAPI{
 		output: &bedrockruntime.ConverseOutput{
-			Output: nil,
+			StopReason: types.StopReasonEndTurn,
+			Output:     nil,
 		},
 	}
 	c := newClientWithAPI(mock)
@@ -211,6 +215,16 @@ func TestComplete_BedrockErrors(t *testing.T) {
 			[]string{"quota exceeded", "Bedrock"},
 		},
 		{
+			"model_error",
+			&types.ModelErrorException{Message: aws.String("model processing failed")},
+			[]string{"model error", "transient"},
+		},
+		{
+			"internal_server",
+			&types.InternalServerException{Message: aws.String("internal failure")},
+			[]string{"internal server error", "transient"},
+		},
+		{
 			"generic",
 			fmt.Errorf("unknown API error"),
 			[]string{"Bedrock Converse", "unknown API error"},
@@ -236,6 +250,7 @@ func TestComplete_BedrockErrors(t *testing.T) {
 func TestComplete_MultipleTextBlocks(t *testing.T) {
 	mock := &mockConverseAPI{
 		output: &bedrockruntime.ConverseOutput{
+			StopReason: types.StopReasonEndTurn,
 			Output: &types.ConverseOutputMemberMessage{
 				Value: types.Message{
 					Role: "assistant",
@@ -316,6 +331,51 @@ func TestComplete_SystemOnlyMessages(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "non-system message")
+}
+
+func TestComplete_StopReasons(t *testing.T) {
+	tests := []struct {
+		name    string
+		reason  types.StopReason
+		wantErr bool
+		contain string
+	}{
+		{"end_turn", types.StopReasonEndTurn, false, ""},
+		{"stop_sequence", types.StopReasonStopSequence, false, ""},
+		{"max_tokens", types.StopReasonMaxTokens, true, "truncated"},
+		{"guardrail_intervened", types.StopReasonGuardrailIntervened, true, "content filter"},
+		{"content_filtered", types.StopReasonContentFiltered, true, "content filter"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockConverseAPI{
+				output: &bedrockruntime.ConverseOutput{
+					StopReason: tt.reason,
+					Output: &types.ConverseOutputMemberMessage{
+						Value: types.Message{
+							Role: "assistant",
+							Content: []types.ContentBlock{
+								&types.ContentBlockMemberText{Value: "response text"},
+							},
+						},
+					},
+				},
+			}
+			c := newClientWithAPI(mock)
+
+			result, err := c.Complete(context.Background(), ai.CompletionRequest{
+				Model:    "anthropic.claude-sonnet-4-6",
+				Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+			})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.contain)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, "response text", result)
+			}
+		})
+	}
 }
 
 func TestNewClient_EmptyRegion(t *testing.T) {

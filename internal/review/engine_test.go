@@ -263,6 +263,18 @@ func TestEngine_Review_UnconfiguredProvider(t *testing.T) {
 	}
 }
 
+func TestNewEngine_PanicsOnEmptyProviders(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: at least one AI provider is required", func() {
+		NewEngine(map[string]AIClient{})
+	})
+}
+
+func TestNewEngine_PanicsOnNilProvider(t *testing.T) {
+	assert.Panics(t, func() {
+		NewEngine(map[string]AIClient{config.ProviderOpenRouter: nil})
+	})
+}
+
 // Ensure mockGitHub satisfies GitHubClient at compile time.
 var _ GitHubClient = (*mockGitHub)(nil)
 

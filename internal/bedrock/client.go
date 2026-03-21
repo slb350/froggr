@@ -15,7 +15,7 @@ import (
 )
 
 // converseAPI is the subset of the Bedrock Runtime API used by Client.
-// Defined here for testability (mock interfaces where consumed).
+// Defined here so the Client can be unit-tested with a mock replacing the real AWS SDK.
 type converseAPI interface {
 	Converse(ctx context.Context, input *bedrockruntime.ConverseInput, opts ...func(*bedrockruntime.Options)) (*bedrockruntime.ConverseOutput, error)
 }
@@ -63,7 +63,26 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 		return "", formatError(err)
 	}
 
+	if err := checkStopReason(resp.StopReason); err != nil {
+		return "", err
+	}
+
 	return extractText(resp)
+}
+
+// checkStopReason returns an error for stop reasons that indicate the response
+// is incomplete or was blocked. Only end_turn and stop_sequence are normal completions.
+func checkStopReason(reason types.StopReason) error {
+	switch reason {
+	case types.StopReasonEndTurn, types.StopReasonStopSequence:
+		return nil
+	case types.StopReasonMaxTokens:
+		return fmt.Errorf("Bedrock: response truncated (max_tokens reached)")
+	case types.StopReasonGuardrailIntervened, types.StopReasonContentFiltered:
+		return fmt.Errorf("Bedrock: response blocked by content filter (stop_reason=%s)", reason)
+	default:
+		return fmt.Errorf("Bedrock: unexpected stop reason %q", reason)
+	}
 }
 
 // splitMessages separates system messages into Bedrock's System field
@@ -88,7 +107,8 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 	return system, messages
 }
 
-// formatError wraps Bedrock API errors with descriptive context.
+// formatError wraps known Bedrock API error types with operator-friendly messages.
+// Unknown errors receive a generic "Bedrock Converse" prefix.
 func formatError(err error) error {
 	var throttle *types.ThrottlingException
 	if errors.As(err, &throttle) {
@@ -120,11 +140,22 @@ func formatError(err error) error {
 		return fmt.Errorf("Bedrock service quota exceeded (request a quota increase): %w", err)
 	}
 
+	var modelErr *types.ModelErrorException
+	if errors.As(err, &modelErr) {
+		return fmt.Errorf("Bedrock model error (may be transient, retry): %w", err)
+	}
+
+	var internalErr *types.InternalServerException
+	if errors.As(err, &internalErr) {
+		return fmt.Errorf("Bedrock internal server error (may be transient, retry): %w", err)
+	}
+
 	return fmt.Errorf("Bedrock Converse: %w", err)
 }
 
-// extractText pulls the assistant's text from the Converse response,
-// concatenating all text content blocks.
+// extractText pulls the assistant's text from the Converse response.
+// Each text block is trimmed; whitespace-only blocks are skipped.
+// Non-empty blocks are joined with newlines.
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 	msg, ok := resp.Output.(*types.ConverseOutputMemberMessage)
 	if !ok {

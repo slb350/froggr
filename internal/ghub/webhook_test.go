@@ -72,6 +72,9 @@ func TestValidateAndParse_MissingSignature(t *testing.T) {
 
 	_, _, err = ValidateAndParse(req, []byte(testSecret))
 	require.Error(t, err)
+
+	var sigErr *SignatureError
+	assert.ErrorAs(t, err, &sigErr)
 }
 
 func TestExtractPushContext_ValidEvent(t *testing.T) {

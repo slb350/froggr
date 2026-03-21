@@ -19,8 +19,8 @@ const froggrConfigPath = ".froggr.yml"
 // reviewTimeout bounds each AI review call so a stalled upstream (AI provider
 // or GitHub) cannot block the handler goroutine indefinitely. The underlying
 // HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter),
-// and Bedrock relies on this context timeout rather than a fixed client timeout.
-// This acts as an outer safety net.
+// and Bedrock uses the AWS SDK's default HTTP timeouts plus this context timeout
+// rather than a froggr-configured client timeout. This acts as an outer safety net.
 const reviewTimeout = 3 * time.Minute
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.

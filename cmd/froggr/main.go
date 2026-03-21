@@ -114,8 +114,9 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// buildProviders creates AI clients based on available environment variables.
-// At least one provider must be configured.
+// buildProviders creates AI clients from available environment variables.
+// Returns an empty map if no providers are configured; the caller must
+// enforce the minimum.
 func buildProviders(logger *slog.Logger) map[string]review.AIClient {
 	providers := make(map[string]review.AIClient)
 

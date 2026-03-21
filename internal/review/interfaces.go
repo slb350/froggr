@@ -20,7 +20,7 @@ type GitHubClient interface {
 }
 
 // AIClient defines the AI completion operation needed by the review engine.
-// It is satisfied by *openrouter.Client and *bedrock.Client.
+// Implementations must call req.Validate() before making API calls.
 type AIClient interface {
 	Complete(ctx context.Context, req ai.CompletionRequest) (string, error)
 }
