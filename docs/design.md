@@ -200,11 +200,12 @@ On subsequent reviews, froggr compares new findings against previous comments. I
 
 froggr supports multiple AI providers. Each repo selects its provider via the
 `provider` field in `.froggr.yml`, or it is auto-detected from the model ID
-format (slash = OpenRouter, dot = Bedrock). If a repo omits both `provider`
-and `model`, froggr falls back to provider-aware server defaults: OpenRouter
-when configured, otherwise Bedrock in Bedrock-only installs. Provider-agnostic
-types live in `internal/ai/`; provider-specific logic is encapsulated in
-`internal/openrouter/` and `internal/bedrock/`.
+format. OpenRouter uses provider/model IDs with a slash. Bedrock uses dotted
+model IDs or ARN-based model refs accepted by Converse. If a repo omits both
+`provider` and `model`, froggr falls back to provider-aware server defaults:
+OpenRouter when configured, otherwise Bedrock in Bedrock-only installs.
+Provider-agnostic types live in `internal/ai/`; provider-specific logic is
+encapsulated in `internal/openrouter/` and `internal/bedrock/`.
 
 ### OpenRouter (default)
 
@@ -227,8 +228,12 @@ dedicated `System` field automatically.
 
 ```yaml
 provider: bedrock
-model: anthropic.claude-sonnet-4-6   # Bedrock model IDs contain a dot
+model: anthropic.claude-sonnet-4-6   # Bedrock model IDs often contain a dot
 ```
+
+Bedrock `model` may also be an ARN-based Converse `modelId`, such as an
+inference profile, prompt version, provisioned/custom model, or marketplace
+endpoint ARN.
 
 ### Configuration
 

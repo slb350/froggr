@@ -204,10 +204,10 @@ func parseProvider(rawProvider string) (Provider, error) {
 }
 
 func validateProviderModel(provider Provider, model string) error {
-	if provider == ProviderBedrock && model != "" && strings.Contains(model, "/") {
-		return fmt.Errorf("bedrock provider requires a Bedrock model ID (e.g. anthropic.claude-sonnet-4-6), got %q", model)
+	if provider == ProviderBedrock && model != "" && looksLikeOpenRouterModelID(model) {
+		return fmt.Errorf("bedrock provider requires a Bedrock model ID or ARN (e.g. anthropic.claude-sonnet-4-6 or arn:aws:bedrock:...:inference-profile/...), got %q", model)
 	}
-	if provider == ProviderOpenRouter && model != "" && !strings.Contains(model, "/") && strings.Contains(model, ".") {
+	if provider == ProviderOpenRouter && model != "" && !looksLikeOpenRouterModelID(model) && looksLikeBedrockModelID(model) {
 		return fmt.Errorf("openrouter provider requires an OpenRouter model ID (e.g. anthropic/claude-sonnet-4.6), got %q", model)
 	}
 	return nil
@@ -221,13 +221,18 @@ func defaultModelForProvider(provider Provider) string {
 }
 
 // detectProvider infers the AI provider from the model ID format.
+// Bedrock model refs include dotted IDs (e.g. "anthropic.claude-sonnet-4-6")
+// and ARN-based resources accepted by Converse (e.g. inference profiles,
+// prompt versions, provisioned/custom models, marketplace endpoints).
 // OpenRouter model IDs contain a slash (e.g. "anthropic/claude-sonnet-4.6").
-// Bedrock model IDs contain a dot but no slash (e.g. "anthropic.claude-sonnet-4-6").
-// Model IDs containing both (e.g. "provider/model-v1.0") are classified as
-// OpenRouter because the slash check takes precedence.
-// Ambiguous model IDs (no slash and no dot) return an error — set provider
-// explicitly in .froggr.yml.
+// Non-ARN model refs containing both slash and dot (e.g. "provider/model-v1.0")
+// are classified as OpenRouter because the slash check takes precedence.
+// Ambiguous model IDs (no slash, no dot, not a recognized ARN) return an
+// error — set provider explicitly in .froggr.yml.
 func detectProvider(model string) (Provider, error) {
+	if isBedrockRuntimeModelRef(model) {
+		return ProviderBedrock, nil
+	}
 	if strings.Contains(model, "/") {
 		return ProviderOpenRouter, nil
 	}
@@ -235,6 +240,41 @@ func detectProvider(model string) (Provider, error) {
 		return ProviderBedrock, nil
 	}
 	return "", fmt.Errorf("cannot auto-detect provider for model %q: set provider explicitly in .froggr.yml", model)
+}
+
+// looksLikeOpenRouterModelID reports whether the model reference clearly uses
+// OpenRouter's provider/model format rather than a Bedrock ARN.
+func looksLikeOpenRouterModelID(model string) bool {
+	return strings.Contains(model, "/") && !isBedrockRuntimeModelRef(model)
+}
+
+// looksLikeBedrockModelID reports whether the model reference clearly matches
+// a Bedrock-style dotted ID or an ARN accepted by the Converse API.
+func looksLikeBedrockModelID(model string) bool {
+	return isBedrockRuntimeModelRef(model) || strings.Contains(model, ".")
+}
+
+// isBedrockRuntimeModelRef reports whether model is an ARN-style resource that
+// Bedrock Converse accepts in ModelId. Besides native Bedrock ARNs, Converse
+// also accepts SageMaker endpoint ARNs for Bedrock Marketplace endpoints.
+func isBedrockRuntimeModelRef(model string) bool {
+	if !strings.HasPrefix(model, "arn:") {
+		return false
+	}
+
+	parts := strings.SplitN(model, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || !strings.HasPrefix(parts[1], "aws") {
+		return false
+	}
+
+	switch parts[2] {
+	case "bedrock":
+		return true
+	case "sagemaker":
+		return strings.HasPrefix(parts[5], "endpoint/")
+	default:
+		return false
+	}
 }
 
 // MatchBranch extracts an issue number from a branch name using the configured

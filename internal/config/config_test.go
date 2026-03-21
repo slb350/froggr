@@ -8,6 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testBedrockInferenceProfileARN = "arn:aws-us-gov:bedrock:us-gov-west-1:123456789012:inference-profile/cross-region-sonnet"
+	testMarketplaceEndpointARN     = "arn:aws:sagemaker:us-west-2:123456789012:endpoint/bedrock-marketplace-sonnet"
+)
+
 func TestParse_ValidConfig(t *testing.T) {
 	input := []byte(`
 branch_pattern: "^(\\d+)-"
@@ -233,6 +238,29 @@ model: anthropic.claude-sonnet-4-6
 	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
 }
 
+func TestParse_ExplicitProviderBedrock_AllowsBedrockRuntimeARNs(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+provider: bedrock
+model: "` + tt.model + `"
+`)
+			cfg, err := Parse(input)
+			require.NoError(t, err)
+			assert.Equal(t, ProviderBedrock, cfg.Provider)
+			assert.Equal(t, tt.model, cfg.Model)
+		})
+	}
+}
+
 func TestParse_ExplicitProviderOpenRouter(t *testing.T) {
 	input := []byte(`
 provider: openrouter
@@ -259,6 +287,28 @@ model: anthropic.claude-sonnet-4-6
 	cfg, err := Parse(input)
 	require.NoError(t, err)
 	assert.Equal(t, ProviderBedrock, cfg.Provider)
+}
+
+func TestParse_AutoDetectBedrockFromRuntimeARNs(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+model: "` + tt.model + `"
+`)
+			cfg, err := Parse(input)
+			require.NoError(t, err)
+			assert.Equal(t, ProviderBedrock, cfg.Provider)
+			assert.Equal(t, tt.model, cfg.Model)
+		})
+	}
 }
 
 func TestParse_AutoDetectOpenRouterFromModelID(t *testing.T) {
@@ -296,6 +346,29 @@ model: anthropic/claude-sonnet-4.6
 	assert.Contains(t, err.Error(), "Bedrock model ID")
 }
 
+func TestParse_OpenRouterWithBedrockRuntimeARN_ReturnsError(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+	}{
+		{"inference profile arn", testBedrockInferenceProfileARN},
+		{"marketplace endpoint arn", testMarketplaceEndpointARN},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := []byte(`
+provider: openrouter
+model: "` + tt.model + `"
+`)
+			_, err := Parse(input)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "openrouter")
+			assert.Contains(t, err.Error(), "OpenRouter model ID")
+		})
+	}
+}
+
 func TestProvider_Valid(t *testing.T) {
 	assert.True(t, ProviderOpenRouter.Valid())
 	assert.True(t, ProviderBedrock.Valid())
@@ -310,7 +383,7 @@ func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
 }
 
 func TestParse_SlashAndDot_PrefersOpenRouter(t *testing.T) {
-	// Model ID with both slash and dot: slash takes precedence per detectProvider.
+	// For non-ARN model IDs, slash still takes precedence over dot.
 	input := []byte(`
 model: custom-provider/model-v2.0
 `)

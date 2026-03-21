@@ -48,7 +48,9 @@ ignore_paths:
 # AI provider: "openrouter" or "bedrock"
 # If omitted, froggr uses the server's default provider:
 # OpenRouter when configured, otherwise Bedrock in Bedrock-only installs.
-# Auto-detected from model ID if omitted and model is set (slash = OpenRouter, dot = Bedrock)
+# Auto-detected from model ID if omitted and model is set.
+# OpenRouter uses provider/model IDs with a slash.
+# Bedrock uses dotted model IDs or ARN-based model refs accepted by Converse.
 provider: "openrouter"
 
 # Any model available on your chosen provider
@@ -81,6 +83,10 @@ froggr also supports AWS Bedrock as an AI provider, using the Converse API with 
 provider: bedrock
 model: anthropic.claude-sonnet-4-6
 ```
+
+Bedrock `model` may also be an ARN-based Converse `modelId`, such as an
+inference profile, prompt version, provisioned/custom model, or marketplace
+endpoint ARN.
 
 **Popular Bedrock models for code review:**
 - `anthropic.claude-sonnet-4-6` — Sonnet 4.6
