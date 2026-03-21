@@ -3,6 +3,7 @@ package review
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/slb350/froggr/internal/ghub"
 	"github.com/stretchr/testify/assert"
@@ -89,7 +90,7 @@ func TestUserPrompt_HugeTitleExceedsBudgetReturnsError(t *testing.T) {
 	rc := Context{
 		Issue: ghub.IssueInfo{
 			Number: 1,
-			Title:  strings.Repeat("x", maxPromptChars+1),
+			Title:  strings.Repeat("x", maxPromptBytes+1),
 		},
 	}
 	_, err := UserPrompt(rc)
@@ -111,32 +112,29 @@ func TestUserPrompt_NormalTitleFits(t *testing.T) {
 
 func TestTruncateForPrompt_VerySmallLimit(t *testing.T) {
 	result := truncateForPrompt("some content that is too long", 10)
-	assert.Equal(t, 10, len([]rune(result)))
+	assert.Equal(t, 10, len(result))
 }
 
 func TestTruncateForPrompt_ExactLimit(t *testing.T) {
 	content := "exact"
-	result := truncateForPrompt(content, len([]rune(content)))
+	result := truncateForPrompt(content, len(content))
 	assert.Equal(t, content, result)
 }
 
 func TestTruncateForPrompt_LimitSmallerThanNote(t *testing.T) {
 	result := truncateForPrompt("long content here", 5)
-	assert.Equal(t, 5, len([]rune(result)))
+	assert.Equal(t, 5, len(result))
 }
 
 func TestTruncateForPrompt_UTF8Safety(t *testing.T) {
-	// Multi-byte characters should not be split during truncation.
-	content := strings.Repeat("日本語", 100) // 300 runes, many more bytes
-	limit := len([]rune(promptTruncationNote)) + 10
+	content := strings.Repeat("日本語", 100)
+	limit := len(promptTruncationNote) + 10 // keep budget lands in the middle of a rune.
 	result := truncateForPrompt(content, limit)
-	// Result should be valid UTF-8 and exactly limit runes.
-	runes := []rune(result)
-	assert.Equal(t, limit, len(runes))
-	// Should contain the truncation note, not a broken rune.
+
+	assert.True(t, utf8.ValidString(result))
+	assert.LessOrEqual(t, len(result), limit)
 	assert.Contains(t, result, "truncated to stay within froggr review budget")
-	// First 10 runes should be from the original content.
-	assert.True(t, strings.HasPrefix(result, strings.Repeat("日本語", 3)+"日"))
+	assert.Equal(t, "日本語"+promptTruncationNote, result)
 }
 
 func TestTruncateForPrompt_ASCIIUnchanged(t *testing.T) {
@@ -172,8 +170,33 @@ func TestUserPrompt_AppliesBudgetAndNotesOmissions(t *testing.T) {
 
 	prompt, err := UserPrompt(rc)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(prompt), maxPromptChars)
+	assert.LessOrEqual(t, len(prompt), maxPromptBytes)
 	assert.Contains(t, prompt, "truncated to stay within froggr review budget")
 	assert.Contains(t, prompt, "omitted 2 additional diff file(s)")
 	assert.Contains(t, prompt, "omitted 1 additional prior review(s)")
+}
+
+func TestUserPrompt_UTF8ContentStaysWithinByteBudget(t *testing.T) {
+	rc := Context{
+		Issue: ghub.IssueInfo{Number: 1, Title: "UTF-8 review"},
+		Diffs: []ghub.FileDiff{
+			{
+				Path:   "src/i18n.go",
+				Status: "modified",
+				Patch:  strings.Repeat("+日本語コメント\n", 2000),
+			},
+		},
+		Files: []ghub.FileContent{
+			{
+				Path:    "src/i18n.go",
+				Content: strings.Repeat("日本語の本文\n", 2000),
+			},
+		},
+	}
+
+	prompt, err := UserPrompt(rc)
+	require.NoError(t, err)
+	assert.LessOrEqual(t, len(prompt), maxPromptBytes)
+	assert.True(t, utf8.ValidString(prompt))
+	assert.Contains(t, prompt, "src/i18n.go")
 }

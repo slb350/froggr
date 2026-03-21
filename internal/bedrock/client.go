@@ -181,8 +181,9 @@ func formatError(err error) error {
 }
 
 // extractText pulls the assistant's text from the Converse response.
-// Each text block is trimmed; whitespace-only blocks are skipped.
-// Non-empty blocks are joined with newlines.
+// Text blocks are concatenated verbatim in Bedrock's original order so
+// structured payloads such as JSON are not corrupted when the model splits
+// one logical reply across multiple content blocks.
 // Returns an error if the response contains non-text content blocks
 // (e.g. tool_use, image) since froggr only expects text responses.
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
@@ -191,19 +192,18 @@ func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 		return "", fmt.Errorf("bedrock: unexpected output type %T", resp.Output)
 	}
 
-	var parts []string
+	var b strings.Builder
 	for _, block := range msg.Value.Content {
 		text, ok := block.(*types.ContentBlockMemberText)
 		if !ok {
 			return "", fmt.Errorf("bedrock: unexpected content block type %T (froggr expects text-only responses)", block)
 		}
-		if s := strings.TrimSpace(text.Value); s != "" {
-			parts = append(parts, s)
-		}
+		b.WriteString(text.Value)
 	}
 
-	if len(parts) == 0 {
+	result := b.String()
+	if strings.TrimSpace(result) == "" {
 		return "", fmt.Errorf("bedrock: no text content in response")
 	}
-	return strings.Join(parts, "\n"), nil
+	return result, nil
 }

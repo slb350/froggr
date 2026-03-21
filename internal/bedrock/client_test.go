@@ -141,7 +141,7 @@ func TestComplete_NoMessages(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one message")
 }
 
-func TestComplete_TrimsWhitespace(t *testing.T) {
+func TestComplete_PreservesWhitespace(t *testing.T) {
 	mock := &mockConverseAPI{output: converseOutput("  result with whitespace  \n")}
 	c := newClientWithAPI(mock)
 
@@ -150,7 +150,7 @@ func TestComplete_TrimsWhitespace(t *testing.T) {
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "result with whitespace", result)
+	assert.Equal(t, "  result with whitespace  \n", result)
 }
 
 func TestComplete_EmptyTextContent(t *testing.T) {
@@ -300,7 +300,32 @@ func TestComplete_MultipleTextBlocks(t *testing.T) {
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "first part\nsecond part", result)
+	assert.Equal(t, "first partsecond part", result)
+}
+
+func TestComplete_MultipleTextBlocks_PreservesJSONPayload(t *testing.T) {
+	mock := &mockConverseAPI{
+		output: &bedrockruntime.ConverseOutput{
+			StopReason: types.StopReasonEndTurn,
+			Output: &types.ConverseOutputMemberMessage{
+				Value: types.Message{
+					Role: "assistant",
+					Content: []types.ContentBlock{
+						&types.ContentBlockMemberText{Value: "[{\"severity\":\"Bug\", "},
+						&types.ContentBlockMemberText{Value: "\"file\":\"x.go\", \"line\":1, \"description\":\"issue\"}]"},
+					},
+				},
+			},
+		},
+	}
+	c := newClientWithAPI(mock)
+
+	result, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "[{\"severity\":\"Bug\", \"file\":\"x.go\", \"line\":1, \"description\":\"issue\"}]", result)
 }
 
 func TestComplete_MultipleSystemMessages(t *testing.T) {

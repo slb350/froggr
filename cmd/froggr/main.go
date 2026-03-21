@@ -34,6 +34,15 @@ const (
 	providerInitTimeout = 15 * time.Second
 )
 
+var (
+	newOpenRouterClient = func(apiKey string) (review.AIClient, error) {
+		return openrouter.NewClient(apiKey)
+	}
+	newBedrockClient = func(ctx context.Context, region string) (review.AIClient, error) {
+		return bedrock.NewClient(ctx, region)
+	}
+)
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -127,28 +136,33 @@ func envOr(key, fallback string) string {
 // enforce the minimum.
 func buildProviders(logger *slog.Logger) (map[config.Provider]review.AIClient, error) {
 	providers := make(map[config.Provider]review.AIClient)
+	var initErrs []error
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		client, err := openrouter.NewClient(key)
-		if err != nil {
-			return nil, fmt.Errorf("initializing OpenRouter client: %w", err)
+		if err := registerProvider(logger, providers, config.ProviderOpenRouter, func() (review.AIClient, error) {
+			return newOpenRouterClient(key)
+		}); err != nil {
+			initErrs = append(initErrs, err)
 		}
-		providers[config.ProviderOpenRouter] = client
-		logger.Info("registered AI provider", "provider", config.ProviderOpenRouter)
 	}
 
 	if region := awsRegion(); region != "" {
-		logger.Info("initializing Bedrock client", "region", region)
-		initCtx, initCancel := context.WithTimeout(context.Background(), providerInitTimeout)
-		client, err := bedrock.NewClient(initCtx, region)
-		initCancel()
-		if err != nil {
-			return nil, fmt.Errorf("initializing Bedrock client: %w", err)
+		if err := registerProvider(logger, providers, config.ProviderBedrock, func() (review.AIClient, error) {
+			initCtx, initCancel := context.WithTimeout(context.Background(), providerInitTimeout)
+			client, err := newBedrockClient(initCtx, region)
+			initCancel()
+			return client, err
+		}, "region", region); err != nil {
+			initErrs = append(initErrs, err)
 		}
-		providers[config.ProviderBedrock] = client
-		logger.Info("registered AI provider", "provider", config.ProviderBedrock, "region", region)
 	}
 
+	if len(providers) > 0 {
+		return providers, nil
+	}
+	if len(initErrs) > 0 {
+		return nil, errors.Join(initErrs...)
+	}
 	return providers, nil
 }
 
@@ -166,4 +180,34 @@ func configuredProviders(providers map[config.Provider]review.AIClient) []config
 		keys = append(keys, provider)
 	}
 	return keys
+}
+
+func registerProvider(
+	logger *slog.Logger,
+	providers map[config.Provider]review.AIClient,
+	provider config.Provider,
+	init func() (review.AIClient, error),
+	extraLogAttrs ...any,
+) error {
+	client, err := init()
+	if err != nil {
+		initErr := fmt.Errorf("initializing %s client: %w", providerDisplayName(provider), err)
+		logAttrs := append([]any{"provider", provider, "error", err}, extraLogAttrs...)
+		logger.Warn("failed to initialize AI provider", logAttrs...)
+		return initErr
+	}
+
+	providers[provider] = client
+	logAttrs := append([]any{"provider", provider}, extraLogAttrs...)
+	logger.Info("registered AI provider", logAttrs...)
+	return nil
+}
+
+func providerDisplayName(provider config.Provider) string {
+	switch provider {
+	case config.ProviderBedrock:
+		return "Bedrock"
+	default:
+		return "OpenRouter"
+	}
 }

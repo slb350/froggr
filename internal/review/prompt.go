@@ -3,22 +3,23 @@ package review
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
 	// Prompt budgeting is deliberate: bounded input keeps review latency and
 	// cost predictable, and avoids silent provider-side truncation on big pushes.
 
-	// maxPromptChars caps total prompt size (~30k tokens for most tokenizers).
-	maxPromptChars = 120000
-	// maxIssueBodyChars limits the issue description included for context.
-	maxIssueBodyChars = 4000
-	// maxDiffPatchChars limits each individual file diff patch.
-	maxDiffPatchChars = 8000
-	// maxFileContentChars limits each full file body fetched at HEAD.
-	maxFileContentChars = 12000
-	// maxPriorReviewChars limits each prior froggr review comment.
-	maxPriorReviewChars  = 4000
+	// maxPromptBytes caps total prompt size (~30k tokens for most tokenizers).
+	maxPromptBytes = 120000
+	// maxIssueBodyBytes limits the issue description included for context.
+	maxIssueBodyBytes = 4000
+	// maxDiffPatchBytes limits each individual file diff patch.
+	maxDiffPatchBytes = 8000
+	// maxFileContentBytes limits each full file body fetched at HEAD.
+	maxFileContentBytes = 12000
+	// maxPriorReviewBytes limits each prior froggr review comment.
+	maxPriorReviewBytes  = 4000
 	promptTruncationNote = "\n... [truncated to stay within froggr review budget]\n"
 )
 
@@ -59,13 +60,13 @@ Example response:
 // It returns an error if the prompt budget is too small to include
 // the issue title or any code context (diffs or files).
 func UserPrompt(rc Context) (string, error) {
-	budget := newPromptBudget(maxPromptChars)
+	budget := newPromptBudget(maxPromptBytes)
 
 	if !budget.Write(fmt.Sprintf("## Issue #%d: %s\n\n", rc.Issue.Number, rc.Issue.Title)) {
-		return "", fmt.Errorf("issue title exceeds prompt budget (%d chars)", maxPromptChars)
+		return "", fmt.Errorf("issue title exceeds prompt budget (%d bytes)", maxPromptBytes)
 	}
 	if rc.Issue.Body != "" {
-		_ = budget.Write(truncateForPrompt(rc.Issue.Body, maxIssueBodyChars) + "\n\n")
+		_ = budget.Write(truncateForPrompt(rc.Issue.Body, maxIssueBodyBytes) + "\n\n")
 	}
 
 	diffsWritten := writeDiffSection(budget, rc)
@@ -100,7 +101,7 @@ func writeDiffSection(budget *promptBudget, rc Context) bool {
 			"### %s (%s)\n```diff\n%s\n```\n\n",
 			d.Path,
 			d.Status,
-			truncateForPrompt(patch, maxDiffPatchChars),
+			truncateForPrompt(patch, maxDiffPatchBytes),
 		)
 		if !budget.Write(chunk) {
 			omitted += len(rc.Diffs) - i
@@ -126,7 +127,7 @@ func writeFileSection(budget *promptBudget, rc Context) bool {
 		chunk := fmt.Sprintf(
 			"### %s\n```\n%s\n```\n\n",
 			f.Path,
-			truncateForPrompt(f.Content, maxFileContentChars),
+			truncateForPrompt(f.Content, maxFileContentBytes),
 		)
 		if !budget.Write(chunk) {
 			omitted = len(rc.Files) - i
@@ -149,7 +150,7 @@ func writePriorReviewSection(budget *promptBudget, rc Context) {
 		chunk := fmt.Sprintf(
 			"### Prior Review %d\n%s\n\n",
 			i+1,
-			truncateForPrompt(r, maxPriorReviewChars),
+			truncateForPrompt(r, maxPriorReviewBytes),
 		)
 		if !budget.Write(chunk) {
 			omitted += len(rc.PriorReviews) - i
@@ -159,7 +160,7 @@ func writePriorReviewSection(budget *promptBudget, rc Context) {
 	writeBudgetNote(budget, omitted, "prior review")
 }
 
-// promptBudget tracks remaining character capacity for a prompt under
+// promptBudget tracks remaining byte capacity for a prompt under
 // construction. Write() accepts or rejects whole chunks atomically so we
 // never cut through markdown fences, headings, or code blocks mid-section.
 type promptBudget struct {
@@ -188,28 +189,34 @@ func (p *promptBudget) String() string {
 	return p.b.String()
 }
 
-// truncateForPrompt trims s to fit in limit runes, appending a
+// truncateForPrompt trims s to fit in limit bytes, appending a
 // truncation note so the model knows content was cut.
 func truncateForPrompt(s string, limit int) string {
-	// Fast path: byte length is always >= rune length, so if the byte
-	// count fits, the rune count certainly does. Avoids a []rune
-	// allocation for the common case (ASCII code diffs).
 	if len(s) <= limit {
 		return s
 	}
+	if limit <= 0 {
+		return ""
+	}
+	if limit <= len(promptTruncationNote) {
+		return utf8SafePrefix(promptTruncationNote, limit)
+	}
 
-	runes := []rune(s)
-	if len(runes) <= limit {
+	keep := limit - len(promptTruncationNote)
+	return utf8SafePrefix(s, keep) + promptTruncationNote
+}
+
+func utf8SafePrefix(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(s) <= limit {
 		return s
 	}
-
-	noteRunes := []rune(promptTruncationNote)
-	keep := limit - len(noteRunes)
-	if keep <= 0 {
-		return string(noteRunes[:limit])
+	for limit > 0 && limit < len(s) && !utf8.RuneStart(s[limit]) {
+		limit--
 	}
-
-	return string(runes[:keep]) + promptTruncationNote
+	return s[:limit]
 }
 
 // writeBudgetNote appends an italicized context note to the prompt when
