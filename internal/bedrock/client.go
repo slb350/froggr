@@ -71,7 +71,9 @@ func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string
 }
 
 // checkStopReason returns an error for stop reasons that indicate the response
-// is incomplete or was blocked. Only end_turn and stop_sequence are normal completions.
+// is incomplete or was blocked. Only end_turn and stop_sequence are treated as
+// normal completions. tool_use is valid in Bedrock but froggr does not use tool
+// calling, so it falls through to the default error case.
 func checkStopReason(reason types.StopReason) error {
 	switch reason {
 	case types.StopReasonEndTurn, types.StopReasonStopSequence:
@@ -150,12 +152,29 @@ func formatError(err error) error {
 		return fmt.Errorf("Bedrock internal server error (may be transient, retry): %w", err)
 	}
 
+	var timeout *types.ModelTimeoutException
+	if errors.As(err, &timeout) {
+		return fmt.Errorf("Bedrock model timeout (prompt may be too large, or retry): %w", err)
+	}
+
+	var unavailable *types.ServiceUnavailableException
+	if errors.As(err, &unavailable) {
+		return fmt.Errorf("Bedrock service unavailable (may be transient, retry): %w", err)
+	}
+
+	var conflict *types.ConflictException
+	if errors.As(err, &conflict) {
+		return fmt.Errorf("Bedrock conflict: %w", err)
+	}
+
 	return fmt.Errorf("Bedrock Converse: %w", err)
 }
 
 // extractText pulls the assistant's text from the Converse response.
 // Each text block is trimmed; whitespace-only blocks are skipped.
 // Non-empty blocks are joined with newlines.
+// Returns an error if the response contains non-text content blocks
+// (e.g. tool_use, image) since froggr only expects text responses.
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 	msg, ok := resp.Output.(*types.ConverseOutputMemberMessage)
 	if !ok {
@@ -164,10 +183,12 @@ func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
 
 	var parts []string
 	for _, block := range msg.Value.Content {
-		if text, ok := block.(*types.ContentBlockMemberText); ok {
-			if s := strings.TrimSpace(text.Value); s != "" {
-				parts = append(parts, s)
-			}
+		text, ok := block.(*types.ContentBlockMemberText)
+		if !ok {
+			return "", fmt.Errorf("Bedrock: unexpected content block type %T (froggr expects text-only responses)", block)
+		}
+		if s := strings.TrimSpace(text.Value); s != "" {
+			parts = append(parts, s)
 		}
 	}
 

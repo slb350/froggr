@@ -121,7 +121,12 @@ func buildProviders(logger *slog.Logger) map[string]review.AIClient {
 	providers := make(map[string]review.AIClient)
 
 	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
-		providers[config.ProviderOpenRouter] = openrouter.NewClient(key)
+		client, err := openrouter.NewClient(key)
+		if err != nil {
+			logger.Error("failed to initialize OpenRouter client", "error", err)
+			os.Exit(1)
+		}
+		providers[config.ProviderOpenRouter] = client
 		logger.Info("registered AI provider", "provider", config.ProviderOpenRouter)
 	}
 

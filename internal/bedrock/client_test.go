@@ -225,6 +225,21 @@ func TestComplete_BedrockErrors(t *testing.T) {
 			[]string{"internal server error", "transient"},
 		},
 		{
+			"model_timeout",
+			&types.ModelTimeoutException{Message: aws.String("processing timed out")},
+			[]string{"timeout", "prompt may be too large"},
+		},
+		{
+			"service_unavailable",
+			&types.ServiceUnavailableException{Message: aws.String("service down")},
+			[]string{"service unavailable", "transient"},
+		},
+		{
+			"conflict",
+			&types.ConflictException{Message: aws.String("conflict occurred")},
+			[]string{"conflict"},
+		},
+		{
 			"generic",
 			fmt.Errorf("unknown API error"),
 			[]string{"Bedrock Converse", "unknown API error"},
@@ -345,6 +360,8 @@ func TestComplete_StopReasons(t *testing.T) {
 		{"max_tokens", types.StopReasonMaxTokens, true, "truncated"},
 		{"guardrail_intervened", types.StopReasonGuardrailIntervened, true, "content filter"},
 		{"content_filtered", types.StopReasonContentFiltered, true, "content filter"},
+		{"tool_use", types.StopReasonToolUse, true, "unexpected stop reason"},
+		{"unknown_future", types.StopReason("new_reason"), true, "unexpected stop reason"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -376,6 +393,32 @@ func TestComplete_StopReasons(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComplete_NonTextContentBlock(t *testing.T) {
+	mock := &mockConverseAPI{
+		output: &bedrockruntime.ConverseOutput{
+			StopReason: types.StopReasonEndTurn,
+			Output: &types.ConverseOutputMemberMessage{
+				Value: types.Message{
+					Role: "assistant",
+					Content: []types.ContentBlock{
+						&types.ContentBlockMemberText{Value: "some text"},
+						&types.ContentBlockMemberImage{},
+					},
+				},
+			},
+		},
+	}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected content block type")
+	assert.Contains(t, err.Error(), "text-only responses")
 }
 
 func TestNewClient_EmptyRegion(t *testing.T) {

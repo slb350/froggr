@@ -38,6 +38,10 @@ func NewEngine(providers map[string]AIClient) *Engine {
 // It posts the review as a comment on the issue. If the review is clean and
 // auto_draft_pr is enabled, it also opens a draft PR.
 func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushContext, issueNum int, cfg config.Config) error {
+	if _, ok := e.providers[cfg.Provider]; !ok {
+		return fmt.Errorf("AI provider %q not configured (check environment variables)", cfg.Provider)
+	}
+
 	rc, err := BuildContext(ctx, gh, push, issueNum, cfg)
 	if err != nil {
 		if errors.Is(err, ghub.ErrComparisonTooLarge) {
@@ -68,11 +72,9 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 }
 
 // runAIReview builds the prompt, calls the AI, and parses the response.
+// The caller (Review) must verify that the provider exists before calling.
 func (e *Engine) runAIReview(ctx context.Context, rc Context, provider, model string) (Result, error) {
-	client, ok := e.providers[provider]
-	if !ok {
-		return Result{}, fmt.Errorf("AI provider %q not configured (check environment variables)", provider)
-	}
+	client := e.providers[provider]
 
 	userPrompt, err := UserPrompt(rc)
 	if err != nil {

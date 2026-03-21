@@ -116,6 +116,8 @@ func Parse(content []byte) (Config, error) {
 // detectProvider infers the AI provider from the model ID format.
 // OpenRouter model IDs contain a slash (e.g. "anthropic/claude-sonnet-4.6").
 // Bedrock model IDs contain a dot but no slash (e.g. "anthropic.claude-sonnet-4-6").
+// Model IDs containing both (e.g. "provider/model-v1.0") are classified as
+// OpenRouter because the slash check takes precedence.
 // Ambiguous model IDs (no slash and no dot) return an error — set provider
 // explicitly in .froggr.yml.
 func detectProvider(model string) (string, error) {

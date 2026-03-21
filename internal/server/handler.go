@@ -18,9 +18,9 @@ const froggrConfigPath = ".froggr.yml"
 
 // reviewTimeout bounds each AI review call so a stalled upstream (AI provider
 // or GitHub) cannot block the handler goroutine indefinitely. The underlying
-// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter),
-// and Bedrock uses the AWS SDK's default HTTP timeouts plus this context timeout
-// rather than a froggr-configured client timeout. This acts as an outer safety net.
+// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter);
+// Bedrock relies on the AWS SDK's default HTTP timeout and this context deadline,
+// whichever fires first. This acts as an outer safety net.
 const reviewTimeout = 3 * time.Minute
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
@@ -92,7 +92,7 @@ func (h *Handler) HandlePush(ctx context.Context, push ghub.PushContext) {
 	gh := h.clients(push.InstallationID)
 	cfg, err := h.loadConfig(ctx, gh, push)
 	if err != nil {
-		h.logger.Warn("skipping review because repo config could not be loaded",
+		h.logger.Error("skipping review because repo config could not be loaded",
 			"error", err,
 			"branch", push.Branch,
 			"repo", push.Owner+"/"+push.Repo,
@@ -178,7 +178,7 @@ func (h *Handler) loadConfig(ctx context.Context, gh review.GitHubClient, push g
 			h.logger.Debug("no .froggr.yml found, using defaults")
 			return config.Defaults(), nil
 		}
-		return config.Config{}, err
+		return config.Config{}, fmt.Errorf("fetching .froggr.yml: %w", err)
 	}
 
 	cfg, err := config.Parse([]byte(fc.Content))

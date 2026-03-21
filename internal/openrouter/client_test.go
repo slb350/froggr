@@ -19,7 +19,8 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.S
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	c := NewClient("sk-or-v1-test")
+	c, err := NewClient("sk-or-v1-test")
+	require.NoError(t, err)
 	c.httpClient = srv.Client()
 	c.setEndpoint(srv.URL)
 	return c, srv
@@ -89,12 +90,8 @@ func TestComplete_VerifiesBody(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestComplete_EmptyAPIKey(t *testing.T) {
-	c := NewClient("")
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "model",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
+func TestNewClient_EmptyAPIKey(t *testing.T) {
+	_, err := NewClient("")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API key")
 }

@@ -29,13 +29,16 @@ type Client struct {
 	httpClient *http.Client
 }
 
-// NewClient creates an OpenRouter API client.
-func NewClient(apiKey string) *Client {
+// NewClient creates an OpenRouter API client. Returns an error if apiKey is empty.
+func NewClient(apiKey string) (*Client, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
+	}
 	return &Client{
 		apiKey:     apiKey,
 		endpoint:   defaultEndpoint,
 		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
-	}
+	}, nil
 }
 
 // setEndpoint overrides the API endpoint (for testing).
@@ -99,9 +102,6 @@ func (c *apiErrorCode) UnmarshalJSON(data []byte) error {
 
 // Complete sends a chat completion request and returns the response content.
 func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
-	if c.apiKey == "" {
-		return "", fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
-	}
 	if err := req.Validate(); err != nil {
 		return "", fmt.Errorf("OpenRouter: %w", err)
 	}
