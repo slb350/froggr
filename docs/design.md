@@ -38,7 +38,7 @@ ignore_paths:
   - "vendor/**"
   - "generated/**"
 provider: "openrouter"                # "openrouter" (default) or "bedrock"
-model: "anthropic/claude-sonnet-4"    # any model ID on the chosen provider
+model: "anthropic/claude-sonnet-4.6"  # any model ID on the chosen provider
 ```
 
 Missing config falls back to defaults. Other config fetch failures do not.
@@ -213,7 +213,7 @@ froggr uses [OpenRouter](https://openrouter.ai) as its default AI gateway. This 
 - **Cost transparency**: Users see per-model pricing and choose their cost/quality tradeoff
 
 ```yaml
-model: "anthropic/claude-sonnet-4"   # OpenRouter model IDs contain a slash
+model: "anthropic/claude-sonnet-4.6" # OpenRouter model IDs contain a slash
 ```
 
 ### AWS Bedrock

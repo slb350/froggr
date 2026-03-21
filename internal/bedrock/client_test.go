@@ -324,6 +324,30 @@ func TestComplete_MultipleSystemMessages(t *testing.T) {
 	require.Len(t, mock.input.Messages, 1)
 }
 
+func TestComplete_AssistantRoleMessages(t *testing.T) {
+	mock := &mockConverseAPI{output: converseOutput("ok")}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model: "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{
+			{Role: ai.RoleSystem, Content: "system prompt"},
+			{Role: ai.RoleUser, Content: "user message"},
+			{Role: ai.RoleAssistant, Content: "assistant reply"},
+			{Role: ai.RoleUser, Content: "follow up"},
+		},
+	})
+	require.NoError(t, err)
+
+	// System message in System field, not Messages.
+	require.Len(t, mock.input.System, 1)
+	// User, assistant, user in Messages (preserving order).
+	require.Len(t, mock.input.Messages, 3)
+	assert.Equal(t, "user", string(mock.input.Messages[0].Role))
+	assert.Equal(t, "assistant", string(mock.input.Messages[1].Role))
+	assert.Equal(t, "user", string(mock.input.Messages[2].Role))
+}
+
 func TestComplete_WhitespaceOnlyContent(t *testing.T) {
 	mock := &mockConverseAPI{output: converseOutput("   \n  ")}
 	c := newClientWithAPI(mock)

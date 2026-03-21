@@ -31,13 +31,18 @@ const (
 	ProviderBedrock    Provider = "bedrock"
 )
 
+// Valid reports whether p is a known provider.
+func (p Provider) Valid() bool {
+	return p == ProviderOpenRouter || p == ProviderBedrock
+}
+
 // Config holds the parsed .froggr.yml configuration for a repository.
 type Config struct {
 	BranchPattern *regexp.Regexp
 	AutoDraftPR   bool
 	IgnorePaths   []string
-	Model    string
-	Provider Provider
+	Model         string
+	Provider      Provider
 }
 
 // rawConfig is the YAML-deserialized form before validation.
@@ -123,7 +128,7 @@ func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
 func resolveProvider(rawProvider, model string, defaultProvider Provider) (Provider, error) {
 	if rawProvider != "" {
 		p := Provider(rawProvider)
-		if p != ProviderOpenRouter && p != ProviderBedrock {
+		if !p.Valid() {
 			return "", fmt.Errorf("invalid provider %q: must be %q or %q", rawProvider, ProviderOpenRouter, ProviderBedrock)
 		}
 		return p, nil

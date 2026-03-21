@@ -265,6 +265,24 @@ model: anthropic.claude-sonnet-4-6
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
+func TestParse_ExplicitBedrockOverridesOpenRouterModel(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+model: anthropic/claude-sonnet-4.6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+}
+
+func TestProvider_Valid(t *testing.T) {
+	assert.True(t, ProviderOpenRouter.Valid())
+	assert.True(t, ProviderBedrock.Valid())
+	assert.False(t, Provider("azure").Valid())
+	assert.False(t, Provider("").Valid())
+}
+
 func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
 	cfg, err := Parse(nil)
 	require.NoError(t, err)

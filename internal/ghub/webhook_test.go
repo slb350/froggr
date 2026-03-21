@@ -59,7 +59,9 @@ func TestValidateAndParse_InvalidSignature(t *testing.T) {
 	assert.Contains(t, err.Error(), "signature")
 
 	var sigErr *SignatureError
-	assert.ErrorAs(t, err, &sigErr)
+	require.ErrorAs(t, err, &sigErr)
+	assert.NotNil(t, sigErr.Unwrap(), "Unwrap should return the inner error")
+	assert.Contains(t, sigErr.Unwrap().Error(), "signature")
 }
 
 func TestValidateAndParse_MissingSignature(t *testing.T) {

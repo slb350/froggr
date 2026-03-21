@@ -263,6 +263,22 @@ func TestHandler_BedrockConfigPipeline(t *testing.T) {
 	assert.Equal(t, "anthropic.claude-sonnet-4-6", call.cfg.Model)
 }
 
+func TestHandler_AmbiguousModelID_SkipsReview(t *testing.T) {
+	gh := &mockGHClient{
+		fileContent: ghub.FileContent{
+			Path:    ".froggr.yml",
+			Content: "model: gpt-4o\n",
+		},
+	}
+	eng := &mockReviewer{}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	noReview(t, eng, testDebounceWindow*3)
+}
+
 type blockingReviewer struct {
 	started  chan struct{}
 	canceled chan error

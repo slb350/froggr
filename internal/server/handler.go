@@ -18,8 +18,8 @@ const froggrConfigPath = ".froggr.yml"
 
 // reviewTimeout bounds each AI review call so a stalled upstream (AI provider
 // or GitHub) cannot block the handler goroutine indefinitely. The underlying
-// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter,
-// 120s Bedrock). This acts as an outer safety net.
+// HTTP clients have their own shorter per-request timeouts; this acts as an
+// outer safety net.
 const reviewTimeout = 3 * time.Minute
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.

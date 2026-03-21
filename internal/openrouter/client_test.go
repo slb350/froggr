@@ -285,8 +285,9 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 }
 
 func TestComplete_EmptyModel(t *testing.T) {
-	c, _ := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {})
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+	c, err := NewClient("sk-or-v1-test")
+	require.NoError(t, err)
+	_, err = c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "",
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
@@ -295,8 +296,9 @@ func TestComplete_EmptyModel(t *testing.T) {
 }
 
 func TestComplete_NoMessages(t *testing.T) {
-	c, _ := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {})
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+	c, err := NewClient("sk-or-v1-test")
+	require.NoError(t, err)
+	_, err = c.Complete(context.Background(), ai.CompletionRequest{
 		Model:    "model",
 		Messages: []ai.Message{},
 	})

@@ -281,6 +281,21 @@ func TestNewEngine_PanicsOnNilProvider(t *testing.T) {
 	})
 }
 
+func TestNewEngine_DefensiveMapCopy(t *testing.T) {
+	mock := &mockAI{response: "[]"}
+	providers := map[config.Provider]AIClient{config.ProviderOpenRouter: mock}
+	engine := NewEngine(providers)
+
+	// Mutate original map after construction.
+	delete(providers, config.ProviderOpenRouter)
+
+	// Engine should still work with the original provider.
+	gh := baseGitHub()
+	err := engine.Review(context.Background(), gh, basePush(), 42, config.Defaults())
+	require.NoError(t, err)
+	assert.Equal(t, 1, mock.calls)
+}
+
 // Ensure mockGitHub satisfies GitHubClient at compile time.
 var _ GitHubClient = (*mockGitHub)(nil)
 
