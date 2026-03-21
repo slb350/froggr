@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/slb350/froggr/internal/ai"
 )
 
 const (
@@ -39,22 +41,16 @@ func NewClient(apiKey string) *Client {
 // setEndpoint overrides the API endpoint (for testing).
 func (c *Client) setEndpoint(url string) { c.endpoint = url }
 
-// Message represents a single chat message.
-type Message struct {
+// wireMessage is the OpenAI-compatible message format for the wire.
+type wireMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// CompletionRequest holds the parameters for a chat completion call.
-type CompletionRequest struct {
-	Model    string
-	Messages []Message
-}
-
 // chatCompletionRequest is the OpenAI-compatible wire format.
 type chatCompletionRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
 }
 
 // chatCompletionResponse is the OpenAI-compatible response format.
@@ -64,7 +60,7 @@ type chatCompletionResponse struct {
 }
 
 type choice struct {
-	Message Message `json:"message"`
+	Message wireMessage `json:"message"`
 }
 
 type apiError struct {
@@ -102,7 +98,7 @@ func (c *apiErrorCode) UnmarshalJSON(data []byte) error {
 }
 
 // Complete sends a chat completion request and returns the response content.
-func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, error) {
+func (c *Client) Complete(ctx context.Context, req ai.CompletionRequest) (string, error) {
 	if c.apiKey == "" {
 		return "", fmt.Errorf("OpenRouter API key is empty (set OPENROUTER_API_KEY)")
 	}
@@ -116,8 +112,12 @@ func (c *Client) Complete(ctx context.Context, req CompletionRequest) (string, e
 }
 
 // doRequest builds, sends, and reads the HTTP request/response.
-func (c *Client) doRequest(ctx context.Context, req CompletionRequest) ([]byte, error) {
-	reqJSON, err := json.Marshal(chatCompletionRequest(req))
+func (c *Client) doRequest(ctx context.Context, req ai.CompletionRequest) ([]byte, error) {
+	msgs := make([]wireMessage, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = wireMessage{Role: m.Role, Content: m.Content}
+	}
+	reqJSON, err := json.Marshal(chatCompletionRequest{Model: req.Model, Messages: msgs})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}

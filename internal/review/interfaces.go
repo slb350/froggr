@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/google/go-github/v84/github"
+	"github.com/slb350/froggr/internal/ai"
 	"github.com/slb350/froggr/internal/ghub"
-	"github.com/slb350/froggr/internal/openrouter"
 )
 
 // GitHubClient defines the GitHub API operations needed by the review engine.
@@ -20,7 +20,7 @@ type GitHubClient interface {
 }
 
 // AIClient defines the AI completion operation needed by the review engine.
-// It is satisfied by *openrouter.Client.
+// It is satisfied by *openrouter.Client and *bedrock.Client.
 type AIClient interface {
-	Complete(ctx context.Context, req openrouter.CompletionRequest) (string, error)
+	Complete(ctx context.Context, req ai.CompletionRequest) (string, error)
 }

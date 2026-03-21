@@ -5,20 +5,22 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/slb350/froggr/internal/ai"
 	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
-	"github.com/slb350/froggr/internal/openrouter"
 )
 
 // Engine orchestrates the full review flow: build context, prompt AI,
 // parse response, format comment, post to GitHub, and optionally open a PR.
 type Engine struct {
-	ai AIClient
+	providers map[string]AIClient
 }
 
-// NewEngine creates a review Engine with the given AI client.
-func NewEngine(ai AIClient) *Engine {
-	return &Engine{ai: ai}
+// NewEngine creates a review Engine with the given AI providers.
+// The map keys are provider names ("openrouter", "bedrock") matching
+// the Config.Provider field. At least one provider must be registered.
+func NewEngine(providers map[string]AIClient) *Engine {
+	return &Engine{providers: providers}
 }
 
 // Review runs a full code review for the given push event and issue number.
@@ -37,7 +39,7 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 		return ctx.Err()
 	}
 
-	result, err := e.runAIReview(ctx, rc, cfg.Model)
+	result, err := e.runAIReview(ctx, rc, cfg.Provider, cfg.Model)
 	if err != nil {
 		return err
 	}
@@ -55,15 +57,20 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 }
 
 // runAIReview builds the prompt, calls the AI, and parses the response.
-func (e *Engine) runAIReview(ctx context.Context, rc Context, model string) (Result, error) {
+func (e *Engine) runAIReview(ctx context.Context, rc Context, provider, model string) (Result, error) {
+	client, ok := e.providers[provider]
+	if !ok {
+		return Result{}, fmt.Errorf("AI provider %q not configured (check environment variables)", provider)
+	}
+
 	userPrompt, err := UserPrompt(rc)
 	if err != nil {
 		return Result{}, fmt.Errorf("building prompt: %w", err)
 	}
 
-	aiResponse, err := e.ai.Complete(ctx, openrouter.CompletionRequest{
+	aiResponse, err := client.Complete(ctx, ai.CompletionRequest{
 		Model: model,
-		Messages: []openrouter.Message{
+		Messages: []ai.Message{
 			{Role: "system", Content: SystemPrompt()},
 			{Role: "user", Content: userPrompt},
 		},

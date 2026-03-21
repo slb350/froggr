@@ -44,8 +44,11 @@ ignore_paths:
   - "vendor/**"
   - "generated/**"
 
-# Any model available on OpenRouter
-# See: https://openrouter.ai/models
+# AI provider: "openrouter" (default) or "bedrock"
+# Auto-detected from model ID if omitted (slash = OpenRouter, no slash = Bedrock)
+provider: "openrouter"
+
+# Any model available on your chosen provider
 model: "anthropic/claude-sonnet-4.6"
 ```
 
@@ -53,15 +56,32 @@ If `.froggr.yml` is missing, froggr uses defaults. If GitHub cannot read the
 file for some other reason, froggr skips the review rather than silently
 changing review policy.
 
+### OpenRouter (default)
+
 froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use any model — Claude, GPT-5, Gemini 3, Qwen 3.5, MiniMax, or whatever suits your codebase and budget.
 
-**Popular models for code review:**
+**Popular OpenRouter models for code review:**
 - `anthropic/claude-sonnet-4.6` — strong reasoning, good cost/quality balance (default)
 - `anthropic/claude-opus-4.6` — best quality, higher cost
 - `openai/gpt-5.3-codex` — purpose-built for code
 - `google/gemini-3.1-pro-preview` — large context, strong reasoning
 - `qwen/qwen3.5-397b-a17b` — massive 397B MoE, top-tier reasoning
 - `minimax/minimax-m2.7` — fast, strong general reasoning
+
+### AWS Bedrock
+
+froggr also supports AWS Bedrock as an AI provider, using the Converse API with the standard AWS credential chain.
+
+```yaml
+# .froggr.yml — Bedrock example
+provider: bedrock
+model: anthropic.claude-sonnet-4-6
+```
+
+**Available Bedrock models:**
+- `anthropic.claude-sonnet-4-6` — Sonnet 4.6
+- `anthropic.claude-opus-4-6-v1` — Opus 4.6
+- `anthropic.claude-haiku-4-5-20251001-v1:0` — Haiku 4.5
 
 ## Self-Hosting
 
@@ -81,8 +101,11 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 | `GITHUB_APP_ID` | Yes | Your GitHub App's ID |
 | `GITHUB_PRIVATE_KEY` | Yes | PEM-encoded private key for the GitHub App |
 | `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for webhook signature validation |
-| `OPENROUTER_API_KEY` | Yes | API key for OpenRouter |
+| `OPENROUTER_API_KEY` | If using OpenRouter | API key for OpenRouter |
+| `AWS_REGION` | If using Bedrock | AWS region for Bedrock (e.g. `us-west-2`) |
 | `PORT` | No | Server port (default: `8080`) |
+
+At least one AI provider must be configured (`OPENROUTER_API_KEY` or `AWS_REGION`). Bedrock uses the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles).
 
 ### Run
 
@@ -127,6 +150,8 @@ just check
 
 ```
 cmd/froggr/          → entry point, dependency wiring
+internal/ai/         → provider-agnostic AI types (Message, CompletionRequest)
+internal/bedrock/    → AWS Bedrock Converse API client
 internal/config/     → .froggr.yml parsing, branch pattern matching
 internal/openrouter/ → OpenRouter chat completion HTTP client
 internal/ghub/       → GitHub App auth, webhook parsing, API client

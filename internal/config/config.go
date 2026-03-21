@@ -22,12 +22,19 @@ const (
 // Defaults() call (which runs on each push when .froggr.yml is missing).
 var defaultBranchPatternRE = regexp.MustCompile(defaultBranchPattern)
 
+// Valid provider names.
+const (
+	ProviderOpenRouter = "openrouter"
+	ProviderBedrock    = "bedrock"
+)
+
 // Config holds the parsed .froggr.yml configuration for a repository.
 type Config struct {
 	BranchPattern *regexp.Regexp
 	AutoDraftPR   bool
 	IgnorePaths   []string
 	Model         string
+	Provider      string
 }
 
 // rawConfig is the YAML-deserialized form before validation.
@@ -36,6 +43,7 @@ type rawConfig struct {
 	AutoDraftPR   *bool    `yaml:"auto_draft_pr"`
 	IgnorePaths   []string `yaml:"ignore_paths"`
 	Model         string   `yaml:"model"`
+	Provider      string   `yaml:"provider"`
 }
 
 // Defaults returns a Config with sensible default values.
@@ -45,6 +53,7 @@ func Defaults() Config {
 		AutoDraftPR:   true,
 		IgnorePaths:   []string{"*.lock", "vendor/**", "generated/**"},
 		Model:         defaultModel,
+		Provider:      ProviderOpenRouter,
 	}
 }
 
@@ -88,7 +97,26 @@ func Parse(content []byte) (Config, error) {
 		cfg.Model = raw.Model
 	}
 
+	if raw.Provider != "" {
+		if raw.Provider != ProviderOpenRouter && raw.Provider != ProviderBedrock {
+			return Config{}, fmt.Errorf("invalid provider %q: must be %q or %q", raw.Provider, ProviderOpenRouter, ProviderBedrock)
+		}
+		cfg.Provider = raw.Provider
+	} else {
+		cfg.Provider = detectProvider(cfg.Model)
+	}
+
 	return cfg, nil
+}
+
+// detectProvider infers the AI provider from the model ID format.
+// OpenRouter model IDs contain a slash (e.g. "anthropic/claude-sonnet-4.6"),
+// Bedrock model IDs do not (e.g. "anthropic.claude-sonnet-4-6").
+func detectProvider(model string) string {
+	if strings.Contains(model, "/") {
+		return ProviderOpenRouter
+	}
+	return ProviderBedrock
 }
 
 // MatchBranch extracts an issue number from a branch name using the configured

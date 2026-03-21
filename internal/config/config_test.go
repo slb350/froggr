@@ -203,5 +203,70 @@ func TestDefaults(t *testing.T) {
 	assert.NotNil(t, cfg.BranchPattern)
 	assert.True(t, cfg.AutoDraftPR)
 	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
+	assert.Equal(t, "openrouter", cfg.Provider)
 	assert.NotEmpty(t, cfg.IgnorePaths)
+}
+
+func TestParse_ExplicitProviderBedrock(t *testing.T) {
+	input := []byte(`
+provider: bedrock
+model: anthropic.claude-sonnet-4-6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, "bedrock", cfg.Provider)
+	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
+}
+
+func TestParse_ExplicitProviderOpenRouter(t *testing.T) {
+	input := []byte(`
+provider: openrouter
+model: anthropic/claude-sonnet-4.6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", cfg.Provider)
+}
+
+func TestParse_InvalidProvider(t *testing.T) {
+	input := []byte(`
+provider: azure
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider")
+}
+
+func TestParse_AutoDetectBedrockFromModelID(t *testing.T) {
+	input := []byte(`
+model: anthropic.claude-sonnet-4-6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, "bedrock", cfg.Provider)
+}
+
+func TestParse_AutoDetectOpenRouterFromModelID(t *testing.T) {
+	input := []byte(`
+model: anthropic/claude-sonnet-4.6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", cfg.Provider)
+}
+
+func TestParse_ExplicitProviderOverridesAutoDetect(t *testing.T) {
+	input := []byte(`
+provider: openrouter
+model: anthropic.claude-sonnet-4-6
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", cfg.Provider)
+}
+
+func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
+	cfg, err := Parse(nil)
+	require.NoError(t, err)
+	assert.Equal(t, "openrouter", cfg.Provider)
 }

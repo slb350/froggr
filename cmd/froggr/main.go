@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/slb350/froggr/internal/bedrock"
+	"github.com/slb350/froggr/internal/config"
 	"github.com/slb350/froggr/internal/ghub"
 	"github.com/slb350/froggr/internal/openrouter"
 	"github.com/slb350/froggr/internal/review"
@@ -46,15 +48,18 @@ func main() {
 	}
 
 	webhookSecret := requireEnv("GITHUB_WEBHOOK_SECRET")
-	openrouterKey := requireEnv("OPENROUTER_API_KEY")
 	port := envOr("PORT", defaultPort)
 
 	clientFactory := func(installationID int64) review.GitHubClient {
 		return ghub.NewClient(appAuth.ClientForInstallation(installationID))
 	}
 
-	aiClient := openrouter.NewClient(openrouterKey)
-	engine := review.NewEngine(aiClient)
+	providers := buildProviders(logger)
+	if len(providers) == 0 {
+		logger.Error("no AI providers configured: set OPENROUTER_API_KEY and/or AWS_REGION")
+		os.Exit(1)
+	}
+	engine := review.NewEngine(providers)
 	handler := server.NewHandler(clientFactory, engine, debounceWindow, logger)
 	srv := server.NewServer(handler, []byte(webhookSecret), logger)
 
@@ -107,4 +112,35 @@ func envOr(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+// buildProviders creates AI clients based on available environment variables.
+// At least one provider must be configured.
+func buildProviders(logger *slog.Logger) map[string]review.AIClient {
+	providers := make(map[string]review.AIClient)
+
+	if key := os.Getenv("OPENROUTER_API_KEY"); key != "" {
+		providers[config.ProviderOpenRouter] = openrouter.NewClient(key)
+		logger.Info("registered AI provider", "provider", config.ProviderOpenRouter)
+	}
+
+	if region := awsRegion(); region != "" {
+		client, err := bedrock.NewClient(context.Background(), region)
+		if err != nil {
+			logger.Error("failed to initialize Bedrock client", "error", err)
+		} else {
+			providers[config.ProviderBedrock] = client
+			logger.Info("registered AI provider", "provider", config.ProviderBedrock, "region", region)
+		}
+	}
+
+	return providers
+}
+
+// awsRegion returns the configured AWS region from environment variables.
+func awsRegion() string {
+	if r := os.Getenv("AWS_REGION"); r != "" {
+		return r
+	}
+	return os.Getenv("AWS_DEFAULT_REGION")
 }
