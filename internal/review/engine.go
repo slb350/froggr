@@ -19,8 +19,16 @@ type Engine struct {
 // NewEngine creates a review Engine with the given AI providers.
 // The map keys are provider names ("openrouter", "bedrock") matching
 // the Config.Provider field. At least one provider must be registered.
+// The map is copied to prevent callers from mutating the engine's state.
 func NewEngine(providers map[string]AIClient) *Engine {
-	return &Engine{providers: providers}
+	if len(providers) == 0 {
+		panic("review.NewEngine: at least one AI provider is required")
+	}
+	copied := make(map[string]AIClient, len(providers))
+	for k, v := range providers {
+		copied[k] = v
+	}
+	return &Engine{providers: copied}
 }
 
 // Review runs a full code review for the given push event and issue number.

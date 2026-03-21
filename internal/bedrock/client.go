@@ -27,6 +27,9 @@ type Client struct {
 
 // NewClient creates a Bedrock client using the default AWS credential chain.
 func NewClient(ctx context.Context, region string) (*Client, error) {
+	if region == "" {
+		return nil, fmt.Errorf("Bedrock: region is required")
+	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, fmt.Errorf("loading AWS config: %w", err)

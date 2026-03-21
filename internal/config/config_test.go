@@ -203,7 +203,7 @@ func TestDefaults(t *testing.T) {
 	assert.NotNil(t, cfg.BranchPattern)
 	assert.True(t, cfg.AutoDraftPR)
 	assert.Equal(t, "anthropic/claude-sonnet-4.6", cfg.Model)
-	assert.Equal(t, "openrouter", cfg.Provider)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 	assert.NotEmpty(t, cfg.IgnorePaths)
 }
 
@@ -214,7 +214,7 @@ model: anthropic.claude-sonnet-4-6
 `)
 	cfg, err := Parse(input)
 	require.NoError(t, err)
-	assert.Equal(t, "bedrock", cfg.Provider)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
 	assert.Equal(t, "anthropic.claude-sonnet-4-6", cfg.Model)
 }
 
@@ -225,7 +225,7 @@ model: anthropic/claude-sonnet-4.6
 `)
 	cfg, err := Parse(input)
 	require.NoError(t, err)
-	assert.Equal(t, "openrouter", cfg.Provider)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
 func TestParse_InvalidProvider(t *testing.T) {
@@ -243,7 +243,7 @@ model: anthropic.claude-sonnet-4-6
 `)
 	cfg, err := Parse(input)
 	require.NoError(t, err)
-	assert.Equal(t, "bedrock", cfg.Provider)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
 }
 
 func TestParse_AutoDetectOpenRouterFromModelID(t *testing.T) {
@@ -252,7 +252,7 @@ model: anthropic/claude-sonnet-4.6
 `)
 	cfg, err := Parse(input)
 	require.NoError(t, err)
-	assert.Equal(t, "openrouter", cfg.Provider)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
 func TestParse_ExplicitProviderOverridesAutoDetect(t *testing.T) {
@@ -262,11 +262,21 @@ model: anthropic.claude-sonnet-4-6
 `)
 	cfg, err := Parse(input)
 	require.NoError(t, err)
-	assert.Equal(t, "openrouter", cfg.Provider)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
 func TestParse_DefaultProviderIsOpenRouter(t *testing.T) {
 	cfg, err := Parse(nil)
 	require.NoError(t, err)
-	assert.Equal(t, "openrouter", cfg.Provider)
+	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+}
+
+func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {
+	input := []byte(`
+model: gpt-4o
+`)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot auto-detect provider")
+	assert.Contains(t, err.Error(), "gpt-4o")
 }

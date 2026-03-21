@@ -103,20 +103,29 @@ func Parse(content []byte) (Config, error) {
 		}
 		cfg.Provider = raw.Provider
 	} else {
-		cfg.Provider = detectProvider(cfg.Model)
+		detected, err := detectProvider(cfg.Model)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Provider = detected
 	}
 
 	return cfg, nil
 }
 
 // detectProvider infers the AI provider from the model ID format.
-// OpenRouter model IDs contain a slash (e.g. "anthropic/claude-sonnet-4.6"),
-// Bedrock model IDs do not (e.g. "anthropic.claude-sonnet-4-6").
-func detectProvider(model string) string {
+// OpenRouter model IDs contain a slash (e.g. "anthropic/claude-sonnet-4.6").
+// Bedrock model IDs contain a dot but no slash (e.g. "anthropic.claude-sonnet-4-6").
+// Ambiguous model IDs (no slash and no dot) return an error — set provider
+// explicitly in .froggr.yml.
+func detectProvider(model string) (string, error) {
 	if strings.Contains(model, "/") {
-		return ProviderOpenRouter
+		return ProviderOpenRouter, nil
 	}
-	return ProviderBedrock
+	if strings.Contains(model, ".") {
+		return ProviderBedrock, nil
+	}
+	return "", fmt.Errorf("cannot auto-detect provider for model %q: set provider explicitly in .froggr.yml", model)
 }
 
 // MatchBranch extracts an issue number from a branch name using the configured

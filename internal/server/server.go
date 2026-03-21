@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -44,11 +45,14 @@ func (s *Server) Stop() {
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	eventType, event, err := ghub.ValidateAndParse(r, s.webhookSecret)
 	if err != nil {
-		// Signature failures and parse failures both reject the request.
-		// Signature → 401, parse → 400; we use 401 as the common case since
-		// tampered payloads also fail parsing.
-		http.Error(w, "webhook validation failed", http.StatusUnauthorized)
-		s.logger.Warn("webhook rejected", "error", err)
+		var sigErr *ghub.SignatureError
+		if errors.As(err, &sigErr) {
+			http.Error(w, "webhook validation failed", http.StatusUnauthorized)
+			s.logger.Warn("webhook signature validation failed", "error", err)
+		} else {
+			http.Error(w, "webhook parse failed", http.StatusBadRequest)
+			s.logger.Warn("webhook payload parse failed", "error", err)
+		}
 		return
 	}
 

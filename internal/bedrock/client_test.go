@@ -174,55 +174,63 @@ func TestComplete_UnexpectedOutputType(t *testing.T) {
 	assert.Contains(t, err.Error(), "unexpected output type")
 }
 
-func TestComplete_ThrottlingException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.ThrottlingException{Message: aws.String("rate limit exceeded")}}
-	c := newClientWithAPI(mock)
+func TestComplete_BedrockErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		contain []string
+	}{
+		{
+			"throttling",
+			&types.ThrottlingException{Message: aws.String("rate limit exceeded")},
+			[]string{"rate limit", "Bedrock"},
+		},
+		{
+			"validation",
+			&types.ValidationException{Message: aws.String("invalid model ID")},
+			[]string{"validation", "invalid model ID"},
+		},
+		{
+			"access_denied",
+			&types.AccessDeniedException{Message: aws.String("not authorized")},
+			[]string{"access denied", "not authorized"},
+		},
+		{
+			"model_not_ready",
+			&types.ModelNotReadyException{Message: aws.String("model is warming up")},
+			[]string{"not ready"},
+		},
+		{
+			"resource_not_found",
+			&types.ResourceNotFoundException{Message: aws.String("model not found in us-east-1")},
+			[]string{"model not found", "check model ID and region"},
+		},
+		{
+			"quota_exceeded",
+			&types.ServiceQuotaExceededException{Message: aws.String("quota exceeded")},
+			[]string{"quota exceeded", "Bedrock"},
+		},
+		{
+			"generic",
+			fmt.Errorf("unknown API error"),
+			[]string{"Bedrock Converse", "unknown API error"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockConverseAPI{err: tt.err}
+			c := newClientWithAPI(mock)
 
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rate limit")
-	assert.Contains(t, err.Error(), "Bedrock")
-}
-
-func TestComplete_ValidationException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.ValidationException{Message: aws.String("invalid model ID")}}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "bad-model",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "validation")
-	assert.Contains(t, err.Error(), "invalid model ID")
-}
-
-func TestComplete_AccessDeniedException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.AccessDeniedException{Message: aws.String("not authorized")}}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "access denied")
-	assert.Contains(t, err.Error(), "not authorized")
-}
-
-func TestComplete_ModelNotReadyException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.ModelNotReadyException{Message: aws.String("model is warming up")}}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not ready")
+			_, err := c.Complete(context.Background(), ai.CompletionRequest{
+				Model:    "anthropic.claude-sonnet-4-6",
+				Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+			})
+			require.Error(t, err)
+			for _, s := range tt.contain {
+				assert.Contains(t, err.Error(), s)
+			}
+		})
+	}
 }
 
 func TestComplete_MultipleTextBlocks(t *testing.T) {
@@ -286,32 +294,6 @@ func TestComplete_WhitespaceOnlyContent(t *testing.T) {
 	assert.Contains(t, err.Error(), "no text content")
 }
 
-func TestComplete_ResourceNotFoundException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.ResourceNotFoundException{Message: aws.String("model not found in us-east-1")}}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "bad.model.id",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "model not found")
-	assert.Contains(t, err.Error(), "check model ID and region")
-}
-
-func TestComplete_ServiceQuotaExceededException(t *testing.T) {
-	mock := &mockConverseAPI{err: &types.ServiceQuotaExceededException{Message: aws.String("quota exceeded")}}
-	c := newClientWithAPI(mock)
-
-	_, err := c.Complete(context.Background(), ai.CompletionRequest{
-		Model:    "anthropic.claude-sonnet-4-6",
-		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "quota exceeded")
-	assert.Contains(t, err.Error(), "Bedrock")
-}
-
 func TestComplete_EmptyModel(t *testing.T) {
 	mock := &mockConverseAPI{output: converseOutput("ok")}
 	c := newClientWithAPI(mock)
@@ -322,4 +304,22 @@ func TestComplete_EmptyModel(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "model is required")
+}
+
+func TestComplete_SystemOnlyMessages(t *testing.T) {
+	mock := &mockConverseAPI{output: converseOutput("ok")}
+	c := newClientWithAPI(mock)
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "anthropic.claude-sonnet-4-6",
+		Messages: []ai.Message{{Role: ai.RoleSystem, Content: "system prompt"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "non-system message")
+}
+
+func TestNewClient_EmptyRegion(t *testing.T) {
+	_, err := NewClient(context.Background(), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "region is required")
 }

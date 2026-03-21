@@ -128,10 +128,10 @@ func buildProviders(logger *slog.Logger) map[string]review.AIClient {
 		client, err := bedrock.NewClient(context.Background(), region)
 		if err != nil {
 			logger.Error("failed to initialize Bedrock client", "error", err)
-		} else {
-			providers[config.ProviderBedrock] = client
-			logger.Info("registered AI provider", "provider", config.ProviderBedrock, "region", region)
+			os.Exit(1)
 		}
+		providers[config.ProviderBedrock] = client
+		logger.Info("registered AI provider", "provider", config.ProviderBedrock, "region", region)
 	}
 
 	return providers

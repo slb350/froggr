@@ -57,6 +57,9 @@ func TestValidateAndParse_InvalidSignature(t *testing.T) {
 	_, _, err := ValidateAndParse(req, []byte(testSecret))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "signature")
+
+	var sigErr *SignatureError
+	assert.ErrorAs(t, err, &sigErr)
 }
 
 func TestValidateAndParse_MissingSignature(t *testing.T) {

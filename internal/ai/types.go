@@ -26,13 +26,39 @@ type CompletionRequest struct {
 	Messages []Message
 }
 
-// Validate checks that the request has a model and at least one message.
+// Valid reports whether r is one of the three known roles.
+func (r Role) Valid() bool {
+	switch r {
+	case RoleSystem, RoleUser, RoleAssistant:
+		return true
+	}
+	return false
+}
+
+// Validate checks that the request has a model, at least one message with
+// valid roles and non-empty content, and at least one non-system message
+// (required by all providers).
 func (r CompletionRequest) Validate() error {
 	if r.Model == "" {
 		return fmt.Errorf("model is required")
 	}
 	if len(r.Messages) == 0 {
 		return fmt.Errorf("at least one message is required")
+	}
+	hasNonSystem := false
+	for i, m := range r.Messages {
+		if !m.Role.Valid() {
+			return fmt.Errorf("message %d has invalid role %q", i, m.Role)
+		}
+		if m.Content == "" {
+			return fmt.Errorf("message %d has empty content", i)
+		}
+		if m.Role != RoleSystem {
+			hasNonSystem = true
+		}
+	}
+	if !hasNonSystem {
+		return fmt.Errorf("at least one non-system message is required")
 	}
 	return nil
 }

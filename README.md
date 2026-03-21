@@ -45,7 +45,7 @@ ignore_paths:
   - "generated/**"
 
 # AI provider: "openrouter" (default) or "bedrock"
-# Auto-detected from model ID if omitted (slash = OpenRouter, no slash = Bedrock)
+# Auto-detected from model ID if omitted (slash = OpenRouter, dot = Bedrock)
 provider: "openrouter"
 
 # Any model available on your chosen provider
@@ -87,7 +87,7 @@ model: anthropic.claude-sonnet-4-6
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.26+
 - A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) with:
   - Webhook URL pointing to your server's `/webhook` endpoint
   - Permissions: Issues (read/write), Pull requests (read/write), Contents (read)
@@ -102,7 +102,7 @@ model: anthropic.claude-sonnet-4-6
 | `GITHUB_PRIVATE_KEY` | Yes | PEM-encoded private key for the GitHub App |
 | `GITHUB_WEBHOOK_SECRET` | Yes | HMAC secret for webhook signature validation |
 | `OPENROUTER_API_KEY` | If using OpenRouter | API key for OpenRouter |
-| `AWS_REGION` | If using Bedrock | AWS region for Bedrock (e.g. `us-west-2`) |
+| `AWS_REGION` | If using Bedrock | AWS region for Bedrock (e.g. `us-west-2`); `AWS_DEFAULT_REGION` is also accepted as a fallback |
 | `PORT` | No | Server port (default: `8080`) |
 
 At least one AI provider must be configured (`OPENROUTER_API_KEY` or `AWS_REGION`). Bedrock uses the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM roles).

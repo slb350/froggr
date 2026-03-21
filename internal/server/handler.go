@@ -18,8 +18,9 @@ const froggrConfigPath = ".froggr.yml"
 
 // reviewTimeout bounds each AI review call so a stalled upstream (AI provider
 // or GitHub) cannot block the handler goroutine indefinitely. The underlying
-// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter,
-// AWS SDK defaults for Bedrock), so this acts as an outer safety net.
+// HTTP clients have their own shorter timeouts (30s GitHub, 120s OpenRouter),
+// and Bedrock relies on this context timeout rather than a fixed client timeout.
+// This acts as an outer safety net.
 const reviewTimeout = 3 * time.Minute
 
 // ClientFactory creates GitHub API clients authenticated for a specific installation.
@@ -167,9 +168,9 @@ func (h *Handler) onDebounce(_ debounce.Key, data any) {
 }
 
 // loadConfig fetches .froggr.yml from the repo and parses it.
-// Falls back to defaults only when the file is genuinely absent. Other fetch
-// failures are treated as unsafe because silently changing review policy is worse
-// than skipping a run.
+// Returns defaults only when the file is genuinely absent (404).
+// Invalid YAML and other fetch failures both return errors — froggr
+// skips the review rather than silently changing review policy.
 func (h *Handler) loadConfig(ctx context.Context, gh review.GitHubClient, push ghub.PushContext) (config.Config, error) {
 	fc, err := gh.GetFileContent(ctx, push.Owner, push.Repo, froggrConfigPath, push.HeadSHA)
 	if err != nil {

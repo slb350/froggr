@@ -87,7 +87,7 @@ func TestServer_MalformedPayload(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestServer_UnknownEventType(t *testing.T) {

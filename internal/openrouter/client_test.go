@@ -287,6 +287,26 @@ func TestComplete_ServerError_HTMLBody(t *testing.T) {
 	assert.Contains(t, err.Error(), "Service Temporarily Unavailable")
 }
 
+func TestComplete_EmptyModel(t *testing.T) {
+	c, _ := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {})
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "model is required")
+}
+
+func TestComplete_NoMessages(t *testing.T) {
+	c, _ := newTestClient(t, func(_ http.ResponseWriter, _ *http.Request) {})
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "model",
+		Messages: []ai.Message{},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one message")
+}
+
 func TestComplete_TrimsWhitespace(t *testing.T) {
 	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(chatCompletionResponse{

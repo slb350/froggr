@@ -8,13 +8,23 @@ import (
 	"github.com/google/go-github/v84/github"
 )
 
+// SignatureError indicates a webhook signature validation failure, as distinct
+// from a payload parse failure. Callers can use errors.As to choose the
+// appropriate HTTP status code (401 vs 400).
+type SignatureError struct{ Err error }
+
+func (e *SignatureError) Error() string { return e.Err.Error() }
+func (e *SignatureError) Unwrap() error { return e.Err }
+
 // ValidateAndParse validates the webhook signature and parses the event payload.
 // Returns the event type string and the parsed event (use a type switch to
 // determine the concrete type, e.g. *github.PushEvent).
+// Signature failures are wrapped in *SignatureError so callers can distinguish
+// them from parse failures.
 func ValidateAndParse(r *http.Request, secret []byte) (string, any, error) {
 	payload, err := github.ValidatePayload(r, secret)
 	if err != nil {
-		return "", nil, fmt.Errorf("validating webhook signature: %w", err)
+		return "", nil, &SignatureError{Err: fmt.Errorf("validating webhook signature: %w", err)}
 	}
 
 	eventType := github.WebHookType(r)
