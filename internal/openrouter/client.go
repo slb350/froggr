@@ -194,11 +194,12 @@ func formatHTTPError(statusCode int, respBody []byte) error {
 			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, detail)
 		}
 		if len(respBody) > 0 {
-			b := respBody
-			if len(b) > 200 {
-				b = b[:200]
+			s := string(respBody)
+			if len(s) > 200 {
+				// Truncate at a rune boundary to avoid splitting multi-byte UTF-8.
+				s = string([]rune(s)[:200])
 			}
-			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, strings.TrimSpace(string(b)))
+			return fmt.Errorf("OpenRouter API error (status %d): %s", statusCode, strings.TrimSpace(s))
 		}
 		return fmt.Errorf("OpenRouter API error (status %d)", statusCode)
 	}

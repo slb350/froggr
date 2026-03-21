@@ -18,10 +18,12 @@ type mockAI struct {
 	response string
 	err      error
 	calls    int
+	lastReq  ai.CompletionRequest
 }
 
-func (m *mockAI) Complete(_ context.Context, _ ai.CompletionRequest) (string, error) {
+func (m *mockAI) Complete(_ context.Context, req ai.CompletionRequest) (string, error) {
 	m.calls++
+	m.lastReq = req
 	return m.response, m.err
 }
 
@@ -234,6 +236,8 @@ func TestEngine_Review_SelectsProviderFromConfig(t *testing.T) {
 	assert.Equal(t, 0, orMock.calls)
 	assert.Equal(t, 1, brMock.calls)
 	assert.Contains(t, gh.commentPosted, "bedrock found it")
+	assert.Equal(t, cfg.Model, brMock.lastReq.Model)
+	assert.NotEmpty(t, brMock.lastReq.Messages)
 }
 
 func TestEngine_Review_UnconfiguredProvider(t *testing.T) {

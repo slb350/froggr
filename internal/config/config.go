@@ -33,7 +33,11 @@ const (
 
 // Valid reports whether p is a known provider.
 func (p Provider) Valid() bool {
-	return p == ProviderOpenRouter || p == ProviderBedrock
+	switch p {
+	case ProviderOpenRouter, ProviderBedrock:
+		return true
+	}
+	return false
 }
 
 // Config holds the parsed .froggr.yml configuration for a repository.
