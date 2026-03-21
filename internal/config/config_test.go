@@ -299,6 +299,16 @@ model: custom-provider/model-v2.0
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
+func TestParse_AutoDetectBedrockFromVersionedModelID(t *testing.T) {
+	// Real-world Bedrock model IDs can contain colons (e.g. version suffixes).
+	input := []byte(`
+model: anthropic.claude-haiku-4-5-20251001-v1:0
+`)
+	cfg, err := Parse(input)
+	require.NoError(t, err)
+	assert.Equal(t, ProviderBedrock, cfg.Provider)
+}
+
 func TestParse_AmbiguousModelID_ReturnsError(t *testing.T) {
 	input := []byte(`
 model: gpt-4o

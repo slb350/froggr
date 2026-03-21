@@ -92,6 +92,8 @@ func checkStopReason(reason types.StopReason) error {
 		return fmt.Errorf("bedrock: response truncated (max_tokens reached)")
 	case types.StopReasonGuardrailIntervened, types.StopReasonContentFiltered:
 		return fmt.Errorf("bedrock: response blocked by content filter (stop_reason=%s)", reason)
+	case "":
+		return fmt.Errorf("bedrock: response missing stop_reason")
 	default:
 		return fmt.Errorf("bedrock: unexpected stop reason %q", reason)
 	}
@@ -108,6 +110,8 @@ func splitMessages(msgs []ai.Message) ([]types.SystemContentBlock, []types.Messa
 			system = append(system, &types.SystemContentBlockMemberText{Value: m.Content})
 			continue
 		}
+		// ai.Role string values ("user", "assistant") intentionally match
+		// Bedrock's ConversationRole values, so the cast is safe.
 		messages = append(messages, types.Message{
 			Role: types.ConversationRole(m.Role),
 			Content: []types.ContentBlock{

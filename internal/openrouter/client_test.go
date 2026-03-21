@@ -10,9 +10,13 @@ import (
 	"testing"
 
 	"github.com/slb350/froggr/internal/ai"
+	"github.com/slb350/froggr/internal/review"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Compile-time check that *Client satisfies review.AIClient.
+var _ review.AIClient = (*Client)(nil)
 
 func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
@@ -304,6 +308,25 @@ func TestComplete_NoMessages(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "at least one message")
+}
+
+func TestComplete_ServerError_MultiByteUTF8Truncation(t *testing.T) {
+	// Regression test for commit 5e4b63f: formatHTTPError used byte-based
+	// truncation which panicked when body had >200 bytes but <=200 runes.
+	body := strings.Repeat("🐸", 150) // 150 runes = 600 bytes (each emoji is 4 bytes)
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(body))
+	})
+
+	_, err := c.Complete(context.Background(), ai.CompletionRequest{
+		Model:    "model",
+		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "502")
+	// Verify the body was truncated to 200 runes, not panicking on byte slice.
+	assert.Contains(t, err.Error(), "🐸")
 }
 
 func TestComplete_TrimsWhitespace(t *testing.T) {

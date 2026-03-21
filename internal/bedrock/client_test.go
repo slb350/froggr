@@ -9,9 +9,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 	"github.com/slb350/froggr/internal/ai"
+	"github.com/slb350/froggr/internal/review"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// Compile-time check that *Client satisfies review.AIClient.
+var _ review.AIClient = (*Client)(nil)
+
 
 // mockConverseAPI implements converseAPI for testing.
 type mockConverseAPI struct {
@@ -397,6 +402,7 @@ func TestComplete_StopReasons(t *testing.T) {
 		{"guardrail_intervened", types.StopReasonGuardrailIntervened, true, "content filter"},
 		{"content_filtered", types.StopReasonContentFiltered, true, "content filter"},
 		{"tool_use", types.StopReasonToolUse, true, "unexpected stop reason"},
+		{"empty", types.StopReason(""), true, "missing stop_reason"},
 		{"unknown_future", types.StopReason("new_reason"), true, "unexpected stop reason"},
 	}
 	for _, tt := range tests {
@@ -461,6 +467,13 @@ func TestNewClientWithAPI_NilPanics(t *testing.T) {
 	assert.PanicsWithValue(t, "bedrock.newClientWithAPI: nil api", func() {
 		newClientWithAPI(nil)
 	})
+}
+
+func TestRoleValues_MatchBedrockConversationRole(t *testing.T) {
+	// splitMessages casts ai.Role directly to types.ConversationRole.
+	// This test breaks if either side changes its string constants.
+	assert.Equal(t, string(types.ConversationRoleUser), string(ai.RoleUser))
+	assert.Equal(t, string(types.ConversationRoleAssistant), string(ai.RoleAssistant))
 }
 
 func TestNewClient_EmptyRegion(t *testing.T) {

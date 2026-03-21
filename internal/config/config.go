@@ -106,7 +106,7 @@ func Parse(content []byte) (Config, error) {
 		cfg.Model = raw.Model
 	}
 
-	provider, err := resolveProvider(raw.Provider, raw.Model, cfg.Provider)
+	provider, err := resolveProvider(raw.Provider, raw.Model)
 	if err != nil {
 		return Config{}, err
 	}
@@ -129,7 +129,8 @@ func compileBranchPattern(pattern string) (*regexp.Regexp, error) {
 
 // resolveProvider determines the provider from explicit config, model ID
 // auto-detection, or the default. Explicit provider takes precedence.
-func resolveProvider(rawProvider, model string, defaultProvider Provider) (Provider, error) {
+// When neither provider nor model is set, defaults to OpenRouter.
+func resolveProvider(rawProvider, model string) (Provider, error) {
 	if rawProvider != "" {
 		p := Provider(rawProvider)
 		if !p.Valid() {
@@ -140,7 +141,7 @@ func resolveProvider(rawProvider, model string, defaultProvider Provider) (Provi
 	if model != "" {
 		return detectProvider(model)
 	}
-	return defaultProvider, nil
+	return ProviderOpenRouter, nil
 }
 
 // detectProvider infers the AI provider from the model ID format.
