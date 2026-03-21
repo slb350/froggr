@@ -188,19 +188,28 @@ func (p *promptBudget) String() string {
 	return p.b.String()
 }
 
-// truncateForPrompt trims s to fit in limit characters, appending a
+// truncateForPrompt trims s to fit in limit runes, appending a
 // truncation note so the model knows content was cut.
 func truncateForPrompt(s string, limit int) string {
+	// Fast path: byte length is always >= rune length, so if the byte
+	// count fits, the rune count certainly does. Avoids a []rune
+	// allocation for the common case (ASCII code diffs).
 	if len(s) <= limit {
 		return s
 	}
 
-	keep := limit - len(promptTruncationNote)
-	if keep <= 0 {
-		return promptTruncationNote[:limit]
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
 	}
 
-	return s[:keep] + promptTruncationNote
+	noteRunes := []rune(promptTruncationNote)
+	keep := limit - len(noteRunes)
+	if keep <= 0 {
+		return string(noteRunes[:limit])
+	}
+
+	return string(runes[:keep]) + promptTruncationNote
 }
 
 // writeBudgetNote appends an italicized context note to the prompt when

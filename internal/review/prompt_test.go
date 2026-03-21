@@ -111,18 +111,38 @@ func TestUserPrompt_NormalTitleFits(t *testing.T) {
 
 func TestTruncateForPrompt_VerySmallLimit(t *testing.T) {
 	result := truncateForPrompt("some content that is too long", 10)
-	assert.Len(t, result, 10)
+	assert.Equal(t, 10, len([]rune(result)))
 }
 
 func TestTruncateForPrompt_ExactLimit(t *testing.T) {
 	content := "exact"
-	result := truncateForPrompt(content, len(content))
+	result := truncateForPrompt(content, len([]rune(content)))
 	assert.Equal(t, content, result)
 }
 
 func TestTruncateForPrompt_LimitSmallerThanNote(t *testing.T) {
 	result := truncateForPrompt("long content here", 5)
-	assert.Len(t, result, 5)
+	assert.Equal(t, 5, len([]rune(result)))
+}
+
+func TestTruncateForPrompt_UTF8Safety(t *testing.T) {
+	// Multi-byte characters should not be split during truncation.
+	content := strings.Repeat("日本語", 100) // 300 runes, many more bytes
+	limit := len([]rune(promptTruncationNote)) + 10
+	result := truncateForPrompt(content, limit)
+	// Result should be valid UTF-8 and exactly limit runes.
+	runes := []rune(result)
+	assert.Equal(t, limit, len(runes))
+	// Should contain the truncation note, not a broken rune.
+	assert.Contains(t, result, "truncated to stay within froggr review budget")
+	// First 10 runes should be from the original content.
+	assert.True(t, strings.HasPrefix(result, strings.Repeat("日本語", 3)+"日"))
+}
+
+func TestTruncateForPrompt_ASCIIUnchanged(t *testing.T) {
+	content := "short"
+	result := truncateForPrompt(content, 100)
+	assert.Equal(t, content, result)
 }
 
 func TestUserPrompt_AppliesBudgetAndNotesOmissions(t *testing.T) {

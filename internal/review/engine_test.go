@@ -291,6 +291,12 @@ func TestNewEngine_PanicsOnNilProvider(t *testing.T) {
 	})
 }
 
+func TestNewEngine_PanicsOnInvalidProviderKey(t *testing.T) {
+	assert.PanicsWithValue(t, "review.NewEngine: invalid provider key typo", func() {
+		NewEngine(map[config.Provider]AIClient{config.Provider("typo"): &mockAI{}})
+	})
+}
+
 func TestNewEngine_DefensiveMapCopy(t *testing.T) {
 	mock := &mockAI{response: "[]"}
 	providers := map[config.Provider]AIClient{config.ProviderOpenRouter: mock}

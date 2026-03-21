@@ -255,14 +255,17 @@ model: anthropic/claude-sonnet-4.6
 	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
 }
 
-func TestParse_ExplicitProviderOverridesAutoDetect(t *testing.T) {
+func TestParse_OpenRouterWithBedrockModel_ReturnsError(t *testing.T) {
+	// OpenRouter cannot use Bedrock-format model IDs (dot, no slash).
+	// Catch this at config parse time rather than at review time.
 	input := []byte(`
 provider: openrouter
 model: anthropic.claude-sonnet-4-6
 `)
-	cfg, err := Parse(input)
-	require.NoError(t, err)
-	assert.Equal(t, ProviderOpenRouter, cfg.Provider)
+	_, err := Parse(input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "openrouter")
+	assert.Contains(t, err.Error(), "OpenRouter model ID")
 }
 
 func TestParse_BedrockWithOpenRouterModel_ReturnsError(t *testing.T) {

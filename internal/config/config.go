@@ -72,16 +72,21 @@ func Defaults() Config {
 // Parse reads YAML content and returns a validated Config. Missing fields are
 // filled from Defaults(). Empty or nil content returns Defaults().
 func Parse(content []byte) (Config, error) {
-	cfg := Defaults()
-
 	if len(content) == 0 {
-		return cfg, nil
+		return Defaults(), nil
 	}
 
 	var raw rawConfig
 	if err := yaml.Unmarshal(content, &raw); err != nil {
 		return Config{}, fmt.Errorf("parsing .froggr.yml: %w", err)
 	}
+
+	return applyOverrides(raw)
+}
+
+// applyOverrides merges raw YAML values onto Defaults(), validating each field.
+func applyOverrides(raw rawConfig) (Config, error) {
+	cfg := Defaults()
 
 	if raw.BranchPattern != "" {
 		re, err := compileBranchPattern(raw.BranchPattern)
@@ -146,6 +151,9 @@ func resolveProvider(rawProvider, model string) (Provider, error) {
 		}
 		if p == ProviderBedrock && model != "" && strings.Contains(model, "/") {
 			return "", fmt.Errorf("bedrock provider requires a Bedrock model ID (e.g. anthropic.claude-sonnet-4-6), got %q", model)
+		}
+		if p == ProviderOpenRouter && model != "" && !strings.Contains(model, "/") && strings.Contains(model, ".") {
+			return "", fmt.Errorf("openrouter provider requires an OpenRouter model ID (e.g. anthropic/claude-sonnet-4.6), got %q", model)
 		}
 		return p, nil
 	}

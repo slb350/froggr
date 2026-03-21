@@ -60,12 +60,32 @@ func ExtractPushContext(event *github.PushEvent) (PushContext, error) {
 		return PushContext{}, fmt.Errorf("push event missing repository owner")
 	}
 
+	installationID := event.GetInstallation().GetID()
+	if installationID == 0 {
+		return PushContext{}, fmt.Errorf("push event missing installation ID")
+	}
+
+	repoName := repo.GetName()
+	if repoName == "" {
+		return PushContext{}, fmt.Errorf("push event missing repository name")
+	}
+
+	headSHA := event.GetAfter()
+	if headSHA == "" {
+		return PushContext{}, fmt.Errorf("push event missing head SHA")
+	}
+
+	defaultBranch := repo.GetDefaultBranch()
+	if defaultBranch == "" {
+		return PushContext{}, fmt.Errorf("push event missing default branch")
+	}
+
 	return PushContext{
-		InstallationID: event.GetInstallation().GetID(),
+		InstallationID: installationID,
 		Owner:          owner,
-		Repo:           repo.GetName(),
+		Repo:           repoName,
 		Branch:         branch,
-		HeadSHA:        event.GetAfter(),
-		DefaultBranch:  repo.GetDefaultBranch(),
+		HeadSHA:        headSHA,
+		DefaultBranch:  defaultBranch,
 	}, nil
 }

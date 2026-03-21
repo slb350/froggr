@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -53,6 +54,10 @@ func (m *mockReviewer) getCalls() []reviewCall {
 type mockGHClient struct {
 	fileContent ghub.FileContent
 	fileErr     error
+
+	mu             sync.Mutex
+	commentPosted  string
+	commentPostErr error
 }
 
 func (m *mockGHClient) GetIssue(_ context.Context, _, _ string, _ int) (ghub.IssueInfo, error) {
@@ -71,8 +76,17 @@ func (m *mockGHClient) GetFileContent(_ context.Context, _, _, _, _ string) (ghu
 	return m.fileContent, m.fileErr
 }
 
-func (m *mockGHClient) CreateIssueComment(_ context.Context, _, _ string, _ int, _ string) error {
-	return nil
+func (m *mockGHClient) CreateIssueComment(_ context.Context, _, _ string, _ int, body string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.commentPosted = body
+	return m.commentPostErr
+}
+
+func (m *mockGHClient) getCommentPosted() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commentPosted
 }
 
 func (m *mockGHClient) CreateDraftPR(_ context.Context, _, _, _, _, _, _ string) (int, string, error) {
@@ -277,6 +291,24 @@ func TestHandler_AmbiguousModelID_SkipsReview(t *testing.T) {
 	h.HandlePush(context.Background(), testPush())
 
 	noReview(t, eng, testDebounceWindow*3)
+}
+
+func TestHandler_ReviewFailure_PostsFailureComment(t *testing.T) {
+	gh := &mockGHClient{fileErr: testutil.NotFoundError()}
+	eng := &mockReviewer{err: errors.New("AI provider timeout")}
+	h := newTestHandler(gh, eng)
+	defer h.Stop()
+
+	h.HandlePush(context.Background(), testPush())
+
+	waitForReview(t, eng, 500*time.Millisecond)
+	// Give the failure comment post a moment to complete.
+	time.Sleep(50 * time.Millisecond)
+
+	comment := gh.getCommentPosted()
+	assert.Contains(t, comment, "Review failed")
+	assert.Contains(t, comment, "AI provider timeout")
+	assert.Contains(t, comment, "Push again to retry")
 }
 
 type blockingReviewer struct {

@@ -26,6 +26,9 @@ func NewEngine(providers map[config.Provider]AIClient) *Engine {
 	}
 	copied := make(map[config.Provider]AIClient, len(providers))
 	for k, v := range providers {
+		if !k.Valid() {
+			panic("review.NewEngine: invalid provider key " + string(k))
+		}
 		if v == nil {
 			panic("review.NewEngine: nil provider for key " + string(k))
 		}

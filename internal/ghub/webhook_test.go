@@ -133,6 +133,78 @@ func TestExtractPushContext_DefaultBranch(t *testing.T) {
 	assert.Equal(t, "main", ctx.DefaultBranch)
 }
 
+func TestExtractPushContext_MissingInstallationID(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "installation ID")
+}
+
+func TestExtractPushContext_MissingRepoName(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "repository name")
+}
+
+func TestExtractPushContext_MissingHeadSHA(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"},
+			"default_branch": "main"
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "head SHA")
+}
+
+func TestExtractPushContext_MissingDefaultBranch(t *testing.T) {
+	payload := []byte(`{
+		"ref": "refs/heads/42-feature",
+		"after": "abc123",
+		"repository": {
+			"name": "hello-world",
+			"owner": {"login": "octocat"}
+		},
+		"installation": {"id": 1}
+	}`)
+	var event github.PushEvent
+	require.NoError(t, json.Unmarshal(payload, &event))
+
+	_, err := ExtractPushContext(&event)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "default branch")
+}
+
 // --- test fixtures ---
 
 func pushEventPayload(t *testing.T) []byte {

@@ -163,6 +163,10 @@ func (h *Handler) onDebounce(_ debounce.Key, data any) {
 			"branch", pd.push.Branch,
 			"issue", pd.issueNum,
 		)
+		comment := review.FormatFailedComment(pd.push, err)
+		if postErr := pd.gh.CreateIssueComment(reviewCtx, pd.push.Owner, pd.push.Repo, pd.issueNum, comment); postErr != nil {
+			h.logger.Error("failed to post review failure comment", "error", postErr)
+		}
 	}
 }
 
