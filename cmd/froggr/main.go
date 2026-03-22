@@ -34,6 +34,8 @@ const (
 	providerInitTimeout = 15 * time.Second
 )
 
+// newOpenRouterClient and newBedrockClient are constructor functions that can
+// be replaced in tests to inject mock AI clients without network calls.
 var (
 	newOpenRouterClient = func(apiKey string) (review.AIClient, error) {
 		return openrouter.NewClient(apiKey)
@@ -132,8 +134,10 @@ func envOr(key, fallback string) string {
 }
 
 // buildProviders creates AI clients from available environment variables.
-// Returns an empty map if no providers are configured; the caller must
-// enforce the minimum.
+// It tries all configured providers (OpenRouter via API key, Bedrock via AWS
+// region), logging warnings for individual failures. Returns an empty map only
+// if NO providers are configured. If some init and others fail, the working
+// ones are returned — froggr runs with partial provider availability.
 func buildProviders(logger *slog.Logger) (map[config.Provider]review.AIClient, error) {
 	providers := make(map[config.Provider]review.AIClient)
 	var initErrs []error

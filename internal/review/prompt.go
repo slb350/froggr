@@ -23,10 +23,9 @@ const (
 	promptTruncationNote = "\n... [truncated to stay within froggr review budget]\n"
 )
 
-// SystemPrompt returns the system prompt that defines froggr's review focus.
-// It directs the AI to find bugs, security issues, and edge cases — not style.
-func SystemPrompt() string {
-	return `You are a code reviewer. Your job is to find bugs, security issues, logic errors, and missing edge cases in code changes.
+// systemPrompt is the system prompt that defines froggr's review focus.
+// Allocated once at package init to avoid rebuilding on every review.
+var systemPrompt = `You are a code reviewer. Your job is to find bugs, security issues, logic errors, and missing edge cases in code changes.
 
 You should focus on:
 - Definite bugs and logic errors
@@ -54,6 +53,11 @@ Example response:
   {"severity": "Bug", "file": "src/auth.go", "line": 42, "description": "Password comparison uses == instead of constant-time comparison, enabling timing attacks."},
   {"severity": "Concern", "file": "src/handler.go", "line": 15, "description": "HTTP request body is not limited in size, which could lead to memory exhaustion."}
 ]`
+
+// SystemPrompt returns the system prompt that defines froggr's review focus.
+// It directs the AI to find bugs, security issues, and edge cases — not style.
+func SystemPrompt() string {
+	return systemPrompt
 }
 
 // UserPrompt builds the user prompt from the review context.

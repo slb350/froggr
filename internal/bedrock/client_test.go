@@ -179,7 +179,7 @@ func TestComplete_UnexpectedOutputType(t *testing.T) {
 		Messages: []ai.Message{{Role: ai.RoleUser, Content: "test"}},
 	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unexpected output type")
+	assert.Contains(t, err.Error(), "nil output")
 }
 
 func TestComplete_NilResponse(t *testing.T) {

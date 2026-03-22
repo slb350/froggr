@@ -23,6 +23,10 @@ const (
 // Defaults() call (which runs on each push when .froggr.yml is missing).
 var defaultBranchPatternRE = regexp.MustCompile(defaultBranchPattern)
 
+// defaultIgnorePaths is allocated once and shared across all default configs.
+// The slice is treated as read-only after initialization.
+var defaultIgnorePaths = []string{"*.lock", ".env*", "vendor/**", "generated/**"}
+
 // Provider identifies an AI provider.
 type Provider string
 
@@ -75,7 +79,7 @@ func DefaultsForProvider(provider Provider) Config {
 	return Config{
 		BranchPattern: defaultBranchPatternRE,
 		AutoDraftPR:   true,
-		IgnorePaths:   []string{"*.lock", ".env*", "vendor/**", "generated/**"},
+		IgnorePaths:   defaultIgnorePaths,
 		Model:         model,
 		Provider:      provider,
 	}

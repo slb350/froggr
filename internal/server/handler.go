@@ -170,7 +170,7 @@ func (h *Handler) onDebounce(key debounce.Key, data any) {
 			"issue", pd.issueNum,
 		)
 		// Use h.ctx (not reviewCtx) so the comment post works even when the
-		// review timed out. If the handler is shutting down (h.ctx cancelled),
+		// review timed out. If the handler is shutting down (h.ctx canceled),
 		// the post fails gracefully — we're exiting anyway.
 		notifyCtx, notifyCancel := context.WithTimeout(h.ctx, failureCommentTimeout)
 		defer notifyCancel()

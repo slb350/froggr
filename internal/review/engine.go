@@ -47,9 +47,12 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 
 	rc, err := BuildContext(ctx, gh, push, issueNum, cfg)
 	if err != nil {
+		// ErrComparisonTooLarge: we post a specific "skipped" comment explaining
+		// the 300-file limit, then suppress the generic failure comment.
 		if errors.Is(err, ghub.ErrComparisonTooLarge) {
 			return SuppressFailureComment(postSkippedReviewComment(ctx, gh, push, issueNum))
 		}
+		// Closed issue: skip silently — no comment on a closed issue.
 		if errors.Is(err, errIssueClosed) {
 			return SuppressFailureComment(fmt.Errorf("building context: %w", err))
 		}
@@ -70,6 +73,9 @@ func (e *Engine) Review(ctx context.Context, gh GitHubClient, push ghub.PushCont
 		return fmt.Errorf("posting review comment: %w", err)
 	}
 
+	// Clean review + auto_draft_pr: attempt to open a draft PR. Failures
+	// are suppressed because the review itself succeeded — PR creation is
+	// best-effort and the review comment is already posted.
 	if result.IsClean && cfg.AutoDraftPR {
 		return SuppressFailureComment(maybeCreateDraftPR(ctx, gh, push, rc.Issue.Title, issueNum))
 	}

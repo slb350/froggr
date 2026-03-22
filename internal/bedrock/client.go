@@ -187,6 +187,9 @@ func formatError(err error) error {
 // Returns an error if the response contains non-text content blocks
 // (e.g. tool_use, image) since froggr only expects text responses.
 func extractText(resp *bedrockruntime.ConverseOutput) (string, error) {
+	if resp.Output == nil {
+		return "", fmt.Errorf("bedrock: response has nil output")
+	}
 	msg, ok := resp.Output.(*types.ConverseOutputMemberMessage)
 	if !ok {
 		return "", fmt.Errorf("bedrock: unexpected output type %T", resp.Output)

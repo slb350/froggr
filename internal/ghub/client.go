@@ -213,7 +213,7 @@ func (c *Client) findExistingPullRequest(ctx context.Context, owner, repo, head,
 	if err != nil {
 		return nil, fmt.Errorf("listing pull requests for %s:%s -> %s: %w", owner, head, base, err)
 	}
-	if len(prs) == 0 {
+	if len(prs) == 0 || prs[0] == nil {
 		return nil, errPRNotFound
 	}
 	return prs[0], nil
