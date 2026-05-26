@@ -141,9 +141,11 @@ service indefinitely. If a review fails (AI timeout, rate limit, etc.), froggr
 posts a "Review failed" comment on the issue so the developer knows what
 happened and can push again to retry.
 
-Model output is validated strictly. froggr only accepts an explicit empty JSON
-array for a clean review or structured findings it can validate; malformed or
-off-format AI output fails the run instead of being treated as "all clear."
+Model output is validated strictly. froggr parses AI responses with a three-tier
+strategy: bare JSON array → fenced JSON (markdown code block) → text pattern
+matching. An explicit empty JSON array `[]` is the only way to signal "clean
+review." Ambiguous or off-format output that matches none of the tiers fails
+the run instead of being treated as "all clear."
 
 ### Local Development
 
@@ -185,6 +187,7 @@ froggr keeps review context deliberately bounded so large pushes stay fast and
 predictable instead of timing out or relying on provider-side truncation.
 
 - It fetches at most 25 changed-file contexts per review
+- File contents are fetched in parallel (up to 10 concurrent GitHub API requests) to minimize review latency
 - It includes at most the 5 most recent prior froggr reviews (excluding failed/skipped reviews that add no useful context)
 - It truncates oversized issue bodies, patches, file contents, and prior review text with UTF-8-safe byte budgeting
 - It caps the final model prompt at a fixed size and tells the model when context was omitted

@@ -76,6 +76,7 @@ ignore_paths:
   - "*.lock"
   - ".env*"
   - "vendor/**"
+  - "generated/**"
 provider: "openrouter"
 model: "anthropic/claude-sonnet-4.6"
 ```
@@ -100,6 +101,7 @@ At least one AI provider must be configured.
 ### Review Budgeting
 Review context is deliberately bounded to keep large pushes fast and predictable:
 - At most **25 changed-file contexts** per review
+- File contents are fetched in parallel (up to **10 concurrent** GitHub API requests) to minimize review latency
 - At most **5 most recent prior froggr reviews** (excluding failed/skipped)
 - Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting
 - Final prompt is capped at a fixed size; the model is told when context was omitted
@@ -107,10 +109,10 @@ Review context is deliberately bounded to keep large pushes fast and predictable
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
 - If a review fails (AI timeout, rate limit, etc.), froggr **posts a failure comment** so the developer knows and can push again to retry
-- Malformed or off-format AI output fails the run — froggr only accepts an explicit empty JSON array (clean) or structured, validated findings
+- AI response parsing uses a three-tier strategy: bare JSON array → fenced JSON (markdown code block) → text pattern matching. An explicit empty JSON array `[]` is the only way to signal "clean". Ambiguous or malformed output that matches none of the tiers fails the run rather than being treated as clean
 
 ### Push Debounce
-The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run.
+The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run. Each review run has a 3-minute hard timeout; if the AI or GitHub API stalls beyond that, the review fails and a failure comment is posted (with a 30-second timeout of its own, using a fresh context so it works even when the review timed out).
 
 ### Provider Auto-Detection
 If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs). Repos that omit both inherit defaults from whatever providers are available on the server.
