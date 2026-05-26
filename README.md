@@ -68,11 +68,11 @@ froggr uses [OpenRouter](https://openrouter.ai) under the hood, so you can use a
 
 **Popular OpenRouter models for code review:**
 - `anthropic/claude-sonnet-4.6` — strong reasoning, good cost/quality balance (default)
-- `anthropic/claude-opus-4.6` — best quality, higher cost
-- `openai/gpt-5.3-codex` — purpose-built for code
-- `google/gemini-3.1-pro-preview` — large context, strong reasoning
-- `qwen/qwen3.5-397b-a17b` — massive 397B MoE, top-tier reasoning
-- `minimax/minimax-m2.7` — fast, strong general reasoning
+- `anthropic/claude-opus-4.5` — best quality, higher cost
+- `openai/gpt-4o` — strong general-purpose model
+- `google/gemini-2.5-pro` — large context, strong reasoning
+- `deepseek/deepseek-r1` — strong reasoning, low cost
+- `meta-llama/llama-4-maverick` — fast, open-weight model
 
 ### AWS Bedrock
 
@@ -89,9 +89,9 @@ inference profile, prompt version, provisioned/custom model, or marketplace
 endpoint ARN.
 
 **Popular Bedrock models for code review:**
-- `anthropic.claude-sonnet-4-6` — Sonnet 4.6
-- `anthropic.claude-opus-4-6-v1` — Opus 4.6
-- `anthropic.claude-haiku-4-5-20251001-v1:0` — Haiku 4.5
+- `anthropic.claude-sonnet-4-6` — Sonnet 4.6 (default)
+- `anthropic.claude-opus-4-5` — Opus 4.5, best quality
+- `anthropic.claude-haiku-3-5` — Haiku 3.5, fast and affordable
 
 ## Self-Hosting
 
@@ -151,8 +151,11 @@ off-format AI output fails the run instead of being treated as "all clear."
 # Run tests
 go test ./... -race -count=1
 
+# Format (requires goimports)
+just fmt
+
 # Lint (requires golangci-lint v2)
-golangci-lint run
+just lint
 
 # Full check (format, lint, test)
 just check
@@ -165,13 +168,13 @@ just check
 
 ```
 cmd/froggr/          → entry point, dependency wiring
-internal/ai/         → provider-agnostic AI types (Message, CompletionRequest)
+internal/ai/         → provider-agnostic AI types (Message, CompletionRequest, Role)
 internal/bedrock/    → AWS Bedrock Converse API client
-internal/config/     → .froggr.yml parsing, branch pattern matching
+internal/config/     → .froggr.yml parsing, branch pattern matching, provider defaults
 internal/openrouter/ → OpenRouter chat completion HTTP client
-internal/ghub/       → GitHub App auth, webhook parsing, API client
+internal/ghub/       → GitHub App auth, webhook parsing, API client, types
 internal/debounce/   → timer-based push debounce (30s window)
-internal/review/     → AI review engine (context → prompt → parse → format)
+internal/review/     → AI review engine: interfaces, types, context, prompt, parse, format, errors
 internal/server/     → HTTP server, webhook routing, event handler
 internal/testutil/   → shared test helpers (webhook signing, error fixtures)
 ```

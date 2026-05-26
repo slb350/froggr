@@ -10,20 +10,20 @@ A GitHub App that reviews code iteratively during development — before a PR is
 froggr/
 ├── cmd/froggr/          # Entry point, dependency wiring
 ├── internal/
-│   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, interfaces.go)
+│   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role)
 │   ├── bedrock/         # AWS Bedrock Converse API client
-│   ├── config/          # .froggr.yml parsing, branch pattern matching
+│   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults
 │   ├── debounce/        # Timer-based push debounce (30s window)
-│   ├── ghub/            # GitHub App auth, webhook parsing, API client
+│   ├── ghub/            # GitHub App auth, webhook parsing, API client, types
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
-│   ├── review/          # AI review engine (context → prompt → parse → format)
+│   ├── review/          # AI review engine: interfaces, types, context, prompt, parse, format, errors
 │   ├── server/          # HTTP server, webhook routing, event handler
 │   └── testutil/        # Shared test helpers (webhook signing, error fixtures)
 ├── docs/
 │   └── design.md        # Design decisions
 ├── go.mod
 ├── go.sum
-└── justfile             # Task runner
+└── justfile             # Task runner (fmt, lint, test, check, build)
 ```
 
 ## Tech Stack
@@ -44,20 +44,24 @@ froggr/
 ## Common Commands
 
 ```bash
-# Build and run
-go build -o bin/froggr ./cmd/froggr
-./bin/froggr
+# Build
+just build
+# or: go build -o bin/froggr ./cmd/froggr
 
-# Or run directly
+# Run directly
 go run ./cmd/froggr
 
 # Run tests (with race detector)
 go test ./... -race -count=1
 
-# Lint (requires golangci-lint v2)
-golangci-lint run
+# Format (requires goimports)
+just fmt
 
-# Full check (format, lint, test)
+# Lint (requires golangci-lint v2)
+just lint
+# or: golangci-lint run ./...
+
+# Full check (format, lint, test) — same as pre-commit hook
 just check
 ```
 
@@ -110,6 +114,10 @@ The `debounce` package provides a 30-second window to coalesce rapid successive 
 
 ### Provider Auto-Detection
 If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs). Repos that omit both inherit defaults from whatever providers are available on the server.
+
+### Webhook Events Handled
+- `push` — triggers a debounced review for branches matching an issue number
+- `issues.closed` — cancels any pending review for the closed issue
 
 ### Endpoints
 - `POST /webhook` — GitHub webhook receiver (HMAC validated)
