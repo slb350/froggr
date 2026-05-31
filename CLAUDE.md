@@ -16,7 +16,7 @@ froggr/
 │   ├── debounce/        # Timer-based push debounce (30s window)
 │   ├── ghub/            # GitHub App auth, webhook parsing, API client, types
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
-│   ├── review/          # AI review engine: interfaces, types, context, prompt, parse, format, errors
+│   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse, format, errors
 │   ├── server/          # HTTP server, webhook routing, event handler
 │   └── testutil/        # Shared test helpers (webhook signing, error fixtures)
 ├── docs/

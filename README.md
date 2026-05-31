@@ -176,7 +176,7 @@ internal/config/     → .froggr.yml parsing, branch pattern matching, provider 
 internal/openrouter/ → OpenRouter chat completion HTTP client
 internal/ghub/       → GitHub App auth, webhook parsing, API client, types
 internal/debounce/   → timer-based push debounce (30s window)
-internal/review/     → AI review engine: interfaces, types, context, prompt, parse, format, errors
+internal/review/     → AI review engine: engine, interfaces, types, context, prompt, parse, format, errors
 internal/server/     → HTTP server, webhook routing, event handler
 internal/testutil/   → shared test helpers (webhook signing, error fixtures)
 ```
