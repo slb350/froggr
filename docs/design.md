@@ -76,7 +76,6 @@ GitHub ──webhooks──> Webhook Server ──> Review Queue ──> Review 
 |-------|---------|--------|
 | `push` | Branch push | If branch name matches an open issue, queue a review |
 | `issues.closed` | Issue closed | Stop watching the linked branch |
-| `installation.created` | App installed | Store installation credentials |
 
 ## Review Flow
 
