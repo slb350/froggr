@@ -12,9 +12,9 @@ froggr/
 ├── internal/
 │   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role)
 │   ├── bedrock/         # AWS Bedrock Converse API client
-│   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults
+│   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults (DefaultsForProvider/DefaultsForProviders, ParseWithDefaults, Bedrock ARN support)
 │   ├── debounce/        # Timer-based push debounce (30s window)
-│   ├── ghub/            # GitHub App auth, webhook parsing, API client, types
+│   ├── ghub/            # GitHub App auth, webhook parsing, API client, types; per-installation AppAuth client caching
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
 │   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse, format, errors
 │   ├── server/          # HTTP server, webhook routing, event handler
@@ -102,20 +102,21 @@ At least one AI provider must be configured.
 Review context is deliberately bounded to keep large pushes fast and predictable:
 - At most **25 changed-file contexts** per review
 - File contents are fetched in parallel (up to **10 concurrent** GitHub API requests) to minimize review latency
-- At most **5 most recent prior froggr reviews** (excluding failed/skipped)
+- At most **5 most recent prior froggr reviews** (excluding comments starting with `"Review failed:"` or containing `"Review skipped."` — these are filtered by `shouldIncludePriorReview` before building the prompt)
 - Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting
 - Final prompt is capped at a fixed size; the model is told when context was omitted
 
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
 - If a review fails (AI timeout, rate limit, etc.), froggr **posts a failure comment** so the developer knows and can push again to retry
+- Certain non-actionable error conditions (closed issue, comparison-too-large, deleted branch) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting.
 - AI response parsing uses a three-tier strategy: bare JSON array → fenced JSON (markdown code block) → text pattern matching. An explicit empty JSON array `[]` is the only way to signal "clean". Ambiguous or malformed output that matches none of the tiers fails the run rather than being treated as clean
 
 ### Push Debounce
-The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run. Each review run has a 3-minute hard timeout; if the AI or GitHub API stalls beyond that, the review fails and a failure comment is posted (with a 30-second timeout of its own, using a fresh context so it works even when the review timed out).
+The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run. Multiple branches per issue are tracked concurrently — the server maintains a `map[issueRef]map[debounce.Key]struct{}` so each branch gets its own debounce key. Each review run has a 3-minute hard timeout; if the AI or GitHub API stalls beyond that, the review fails and a failure comment is posted (with a 30-second timeout of its own, using a fresh context so it works even when the review timed out). Provider initialization is bounded to 15 seconds (`providerInitTimeout`) to prevent startup hangs when AWS IMDS is unreachable; if one provider fails but another succeeds, the working provider is used.
 
 ### Provider Auto-Detection
-If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs). Repos that omit both inherit defaults from whatever providers are available on the server.
+If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs or ARN-based model refs — inference profiles, provisioned/custom models, and marketplace endpoint ARNs are all recognized). Repos that omit both inherit defaults from whatever providers are available on the server (`DefaultsForProvider`/`DefaultsForProviders` in `config/`). Server-chosen defaults are merged into per-repo config via `config.ParseWithDefaults`.
 
 ### Webhook Events Handled
 - `push` — triggers a debounced review for branches matching an issue number
