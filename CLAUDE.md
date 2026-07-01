@@ -102,14 +102,14 @@ At least one AI provider must be configured.
 Review context is deliberately bounded to keep large pushes fast and predictable:
 - At most **25 changed-file contexts** per review
 - File contents are fetched in parallel (up to **10 concurrent** GitHub API requests) to minimize review latency
-- At most **5 most recent prior froggr reviews** (excluding comments starting with `"Review failed:"` or containing `"Review skipped."` — these are filtered by `shouldIncludePriorReview` before building the prompt)
+- At most **5 most recent prior froggr reviews** (excluding failed/skipped review comments — `shouldIncludePriorReview` filters out any comment whose body starts with or contains `"Review failed:"` or `"Review skipped."` after a section break)
 - Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting
 - Final prompt is capped at a fixed size; the model is told when context was omitted
 
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
 - If a review fails (AI timeout, rate limit, etc.), froggr **posts a failure comment** so the developer knows and can push again to retry
-- Certain non-actionable error conditions (closed issue, comparison-too-large, deleted branch) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting.
+- Certain non-actionable error conditions (closed issue, comparison-too-large) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting. Deleted branch pushes are filtered even earlier: `ExtractPushContext` returns an error and the server logs "ignoring push event" without ever starting a review.
 - AI response parsing uses a three-tier strategy: bare JSON array → fenced JSON (markdown code block) → text pattern matching. An explicit empty JSON array `[]` is the only way to signal "clean". Ambiguous or malformed output that matches none of the tiers fails the run rather than being treated as clean
 
 ### Push Debounce
