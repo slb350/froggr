@@ -30,7 +30,7 @@ froggr/
 
 | Component | Technology |
 |-----------|------------|
-| **Language** | Go 1.26+ |
+| **Language** | Go 1.26.1+ |
 | **AI (default)** | OpenRouter (HTTP, OpenAI-compatible) |
 | **AI (alt)** | AWS Bedrock (Converse API, standard credential chain) |
 | **Hosting** | Self-hosted GitHub App |
@@ -109,7 +109,7 @@ Review context is deliberately bounded to keep large pushes fast and predictable
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
 - If a review fails (AI timeout, rate limit, etc.), froggr **posts a failure comment** so the developer knows and can push again to retry
-- Certain non-actionable error conditions (closed issue, comparison-too-large) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting. Deleted branch pushes are filtered even earlier: `ExtractPushContext` returns an error and the server logs "ignoring push event" without ever starting a review.
+- Certain non-actionable error conditions (closed issue, comparison-too-large) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting. Several push types are filtered without starting a review: pushes to the default branch (handler-level check), tag pushes (`refs/tags/`), and deleted branch pushes — all trigger `ExtractPushContext` to return an error and log "ignoring push event".
 - AI response parsing uses a three-tier strategy: bare JSON array → fenced JSON (markdown code block) → text pattern matching. An explicit empty JSON array `[]` is the only way to signal "clean". Ambiguous or malformed output that matches none of the tiers fails the run rather than being treated as clean
 
 ### Push Debounce
