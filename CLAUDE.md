@@ -8,21 +8,22 @@ A GitHub App that reviews code iteratively during development — before a PR is
 
 ```
 froggr/
-├── cmd/froggr/          # Entry point, dependency wiring
+├── cmd/froggr/          # Entry point, dependency wiring (main.go + main_test.go)
 ├── internal/
 │   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role)
 │   ├── bedrock/         # AWS Bedrock Converse API client
 │   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults (DefaultsForProvider/DefaultsForProviders, ParseWithDefaults, Bedrock ARN support)
 │   ├── debounce/        # Timer-based push debounce (30s window)
-│   ├── ghub/            # GitHub App auth, webhook parsing, API client, types; per-installation AppAuth client caching
+│   ├── ghub/            # GitHub App auth, webhook parsing, API client, types; per-installation AppAuth client caching; IsNotFound helper; SignatureError (401 vs 400)
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
-│   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse, format, errors
+│   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse, format, errors; ErrInvalidAIResponse sentinel
 │   ├── server/          # HTTP server, webhook routing, event handler
 │   └── testutil/        # Shared test helpers (webhook signing, error fixtures)
 ├── docs/
 │   └── design.md        # Design decisions
 ├── go.mod
 ├── go.sum
+├── LICENSE
 └── justfile             # Task runner (fmt, lint, test, check, build)
 ```
 
@@ -100,17 +101,39 @@ At least one AI provider must be configured.
 
 ### Review Budgeting
 Review context is deliberately bounded to keep large pushes fast and predictable:
-- At most **25 changed-file contexts** per review
+- At most **25 changed-file contexts** per review — applied *after* `ignore_paths` filtering, so ignored files don't count against the cap
 - File contents are fetched in parallel (up to **10 concurrent** GitHub API requests) to minimize review latency
-- At most **5 most recent prior froggr reviews** (excluding failed/skipped review comments — `shouldIncludePriorReview` filters out any comment whose body starts with or contains `"Review failed:"` or `"Review skipped."` after a section break)
+- At most **5 most recent prior froggr reviews** — identified by checking `strings.HasSuffix(comment.User.Login, "froggr[bot]")` (the `froggrBotSuffix` constant); `shouldIncludePriorReview` then filters out any comment whose body is blank, starts with `"Review failed:"`, or contains `"Review skipped."` after a section break
+- All issue comments are fetched (paginated, 100/page) before filtering; the last 5 surviving froggr comments are selected
 - Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting
 - Final prompt is capped at a fixed size; the model is told when context was omitted
 
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
 - If a review fails (AI timeout, rate limit, etc.), froggr **posts a failure comment** so the developer knows and can push again to retry
-- Certain non-actionable error conditions (closed issue, comparison-too-large) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting. Several push types are filtered without starting a review: pushes to the default branch (handler-level check), tag pushes (`refs/tags/`), and deleted branch pushes — all trigger `ExtractPushContext` to return an error and log "ignoring push event".
+- Certain non-actionable error conditions (closed issue, comparison-too-large, **draft PR creation failure**) are wrapped with `review.SuppressFailureComment` — froggr skips posting the failure comment for these so as not to generate noise. Check `review.ShouldPostFailureComment(err)` before posting. Several push types are filtered without starting a review: pushes to the default branch (handler-level check), tag pushes (`refs/tags/`), and deleted branch pushes — all trigger `ExtractPushContext` to return an error and log "ignoring push event".
 - AI response parsing uses a three-tier strategy: bare JSON array → fenced JSON (markdown code block) → text pattern matching. An explicit empty JSON array `[]` is the only way to signal "clean". Ambiguous or malformed output that matches none of the tiers fails the run rather than being treated as clean
+- Draft PR creation is idempotent: if GitHub returns 422 "already exists", `CreateDraftPR` calls `findExistingPullRequest` and returns the existing PR rather than failing
+- Skipped reviews (`"Review skipped."`) and failed reviews (`"Review failed: …"`) post distinct comment types — skipped means a structural limit was hit (retry won't help without a push); failed means a transient error occurred and pushing again triggers a retry
+
+### AI Finding Format
+The AI must return findings as a JSON array. Each finding object must have exactly these fields:
+
+```json
+{"severity": "Bug" | "Concern", "file": "path/to/file.go", "line": 42, "description": "..."}
+```
+
+An explicit empty array `[]` signals a clean review. Findings are sorted `Bug` first, `Concern` second when formatted as issue comments.
+
+### Timeouts
+- **GitHub API client**: 30s per request (`defaultGitHubTimeout`)
+- **Review run**: 3 min hard timeout; failure comment posted on expiry (with its own 30s context)
+- **Provider initialization**: 15s (`providerInitTimeout`)
+- **HTTP server read-header**: 10s
+- **Graceful shutdown drain**: 10s (`shutdownTimeout`)
+
+### Provider Auto-Detection Failure Modes
+If `provider` is omitted and the `model` field has no slash (OpenRouter indicator), no dot, and is not an ARN, `detectProvider` returns an explicit error: `cannot auto-detect provider for model "…": set provider explicitly in .froggr.yml`. This is a hard failure, not a fallback.
 
 ### Push Debounce
 The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run. Multiple branches per issue are tracked concurrently — the server maintains a `map[issueRef]map[debounce.Key]struct{}` so each branch gets its own debounce key. Each review run has a 3-minute hard timeout; if the AI or GitHub API stalls beyond that, the review fails and a failure comment is posted (with a 30-second timeout of its own, using a fresh context so it works even when the review timed out). Provider initialization is bounded to 15 seconds (`providerInitTimeout`) to prevent startup hangs when AWS IMDS is unreachable; if one provider fails but another succeeds, the working provider is used.
