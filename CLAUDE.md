@@ -13,7 +13,7 @@ froggr/
 │   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role)
 │   ├── bedrock/         # AWS Bedrock Converse API client
 │   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults (DefaultsForProvider/DefaultsForProviders, ParseWithDefaults, Bedrock ARN support)
-│   ├── debounce/        # Timer-based push debounce (30s window)
+│   ├── debounce/        # Timer-based push debounce (30s window): buffer.go + buffer_test.go
 │   ├── ghub/            # GitHub App auth, webhook parsing, API client, types; per-installation AppAuth client caching; IsNotFound helper; SignatureError (401 vs 400)
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
 │   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse, format, errors; ErrInvalidAIResponse sentinel
@@ -23,6 +23,7 @@ froggr/
 │   └── design.md        # Design decisions
 ├── go.mod
 ├── go.sum
+├── .golangci.yml        # golangci-lint v2 config (13 linters + gofmt/goimports)
 ├── LICENSE
 └── justfile             # Task runner (fmt, lint, test, check, build)
 ```
