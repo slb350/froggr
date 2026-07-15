@@ -23,8 +23,9 @@ froggr/
 │   └── design.md        # Design decisions
 ├── go.mod
 ├── go.sum
-├── .golangci.yml        # golangci-lint v2 config (13 linters + gofmt/goimports)
+├── .golangci.yml        # golangci-lint v2 config (12 linters + gofmt/goimports)
 ├── LICENSE
+├── README.md
 └── justfile             # Task runner (fmt, lint, test, check, build)
 ```
 
