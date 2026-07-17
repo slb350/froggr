@@ -10,7 +10,7 @@ A GitHub App that reviews code iteratively during development — before a PR is
 froggr/
 ├── cmd/froggr/          # Entry point, dependency wiring (main.go + main_test.go)
 ├── internal/
-│   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role)
+│   ├── ai/              # Provider-agnostic types (Message, CompletionRequest, Role); DefaultHTTPTimeout (120s) shared by all AI provider clients
 │   ├── bedrock/         # AWS Bedrock Converse API client
 │   ├── config/          # .froggr.yml parsing, branch pattern matching, provider defaults (DefaultsForProvider/DefaultsForProviders, ParseWithDefaults, Bedrock ARN support)
 │   ├── debounce/        # Timer-based push debounce (30s window): buffer.go + buffer_test.go
@@ -129,6 +129,7 @@ An explicit empty array `[]` signals a clean review. Findings are sorted `Bug` f
 
 ### Timeouts
 - **GitHub API client**: 30s per request (`defaultGitHubTimeout`)
+- **AI provider HTTP client**: 120s per request (`ai.DefaultHTTPTimeout`, shared by both OpenRouter and Bedrock clients)
 - **Review run**: 3 min hard timeout; failure comment posted on expiry (with its own 30s context)
 - **Provider initialization**: 15s (`providerInitTimeout`)
 - **HTTP server read-header**: 10s

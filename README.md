@@ -170,7 +170,7 @@ just check
 
 ```
 cmd/froggr/          → entry point, dependency wiring
-internal/ai/         → provider-agnostic AI types (Message, CompletionRequest, Role)
+internal/ai/         → provider-agnostic AI types (Message, CompletionRequest, Role) and shared HTTP timeout
 internal/bedrock/    → AWS Bedrock Converse API client
 internal/config/     → .froggr.yml parsing, branch pattern matching, provider defaults
 internal/openrouter/ → OpenRouter chat completion HTTP client
