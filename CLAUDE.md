@@ -107,8 +107,9 @@ Review context is deliberately bounded to keep large pushes fast and predictable
 - File contents are fetched in parallel (up to **10 concurrent** GitHub API requests) to minimize review latency
 - At most **5 most recent prior froggr reviews** — identified by checking `c.GetUser() != nil && strings.HasSuffix(c.GetUser().GetLogin(), froggrBotSuffix)` (the `froggrBotSuffix` constant); `shouldIncludePriorReview` then filters out any comment whose body is blank, or whose body starts with `"Review failed:"` / `"Review skipped."` (`HasPrefix`) **or** contains either marker after a blank-line section break (`strings.Contains(trimmed, "\n\n"+marker)`) — both conditions apply to both markers
 - All issue comments are fetched (paginated, 100/page) before filtering; the last 5 surviving froggr comments are selected
-- Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting
-- Final prompt is capped at a fixed size; the model is told when context was omitted
+- Oversized issue bodies, patches, file contents, and prior review text are truncated with UTF-8-safe byte budgeting: issue body 4,000 bytes, diff patch 8,000 bytes, file content 12,000 bytes, prior review 4,000 bytes
+- Final prompt is capped at 120,000 bytes (~30k tokens); the model is told when context was omitted
+- OpenRouter responses exceeding 2 MB are rejected before parsing
 
 ### Fail-Closed Behavior
 - If a branch comparison reaches GitHub's 300 changed-file limit, froggr **refuses the review** and posts an explanatory comment (rather than claiming a partial diff was complete)
@@ -142,7 +143,9 @@ If `provider` is omitted and the `model` field has no slash (OpenRouter indicato
 The `debounce` package provides a 30-second window to coalesce rapid successive pushes into a single review run. Multiple branches per issue are tracked concurrently — the server maintains a `map[issueRef]map[debounce.Key]struct{}` so each branch gets its own debounce key. Each review run has a 3-minute hard timeout; if the AI or GitHub API stalls beyond that, the review fails and a failure comment is posted (with a 30-second timeout of its own, using a fresh context so it works even when the review timed out). Provider initialization is bounded to 15 seconds (`providerInitTimeout`) to prevent startup hangs when AWS IMDS is unreachable; if one provider fails but another succeeds, the working provider is used.
 
 ### Provider Auto-Detection
-If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs or ARN-based model refs — inference profiles, provisioned/custom models, and marketplace endpoint ARNs are all recognized). Repos that omit both inherit defaults from whatever providers are available on the server (`DefaultsForProvider`/`DefaultsForProviders` in `config/`). Server-chosen defaults are merged into per-repo config via `config.ParseWithDefaults`.
+If `provider` is omitted in `.froggr.yml`, froggr auto-detects the provider from the `model` field (OpenRouter uses slash notation; Bedrock uses dotted IDs or ARN-based model refs — inference profiles, provisioned/custom models, and SageMaker endpoint ARNs `arn:aws:sagemaker:...:endpoint/...` are all recognized). Repos that omit both inherit defaults from whatever providers are available on the server (`DefaultsForProvider`/`DefaultsForProviders` in `config/`). Server-chosen defaults are merged into per-repo config via `config.ParseWithDefaults`.
+
+When `provider` is set explicitly, `validateProviderModel` enforces cross-validation: an OpenRouter provider rejects Bedrock-style model IDs and vice versa. This is a hard config error, not a warning.
 
 ### Webhook Events Handled
 - `push` — triggers a debounced review for branches matching an issue number

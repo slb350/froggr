@@ -97,7 +97,7 @@ endpoint ARN.
 
 ### Prerequisites
 
-- Go 1.26+
+- Go 1.26.1+
 - A [GitHub App](https://docs.github.com/en/apps/creating-github-apps) with:
   - Webhook URL pointing to your server's `/webhook` endpoint
   - Permissions: Issues (read/write), Pull requests (read/write), Contents (read)
