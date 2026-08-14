@@ -41,8 +41,8 @@ froggr/
 ## Development Workflow
 
 - TDD: Write failing tests first, implement, refactor, commit
-- All tests must pass before committing — pre-commit hook runs `just check`
-- **Never skip `--no-verify`**
+- All tests must pass before committing — run `just check` manually before each commit
+- No git pre-commit hook is installed; discipline is enforced by convention
 
 ## Common Commands
 
@@ -64,7 +64,7 @@ just fmt
 just lint
 # or: golangci-lint run ./...
 
-# Full check (format, lint, test) — same as pre-commit hook
+# Full check (format, lint, test) — run before committing
 just check
 ```
 
