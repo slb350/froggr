@@ -159,7 +159,7 @@ just fmt
 # Lint (requires golangci-lint v2)
 just lint
 
-# Full check (format, lint, test)
+# Full check (format, lint, test) — no pre-commit hook installed, run this manually before committing
 just check
 
 # Expose localhost for GitHub webhooks
