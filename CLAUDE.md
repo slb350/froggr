@@ -156,6 +156,6 @@ When `provider` is set explicitly, `validateProviderModel` enforces cross-valida
 - `GET /health` — Liveness/readiness probe
 
 ## Conventions
-- All styles and config via injected dependencies (no package-level globals)
+- All mutable configuration via injected dependencies (no package-level mutable globals); read-only package-level caches (default ignore paths, system prompt) are permitted for performance
 - Graceful shutdown: in-flight reviews are canceled to prevent stale upstream hangs
 - GitHub API calls use a client timeout throughout
