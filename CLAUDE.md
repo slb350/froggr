@@ -159,3 +159,8 @@ When `provider` is set explicitly, `validateProviderModel` enforces cross-valida
 - All mutable configuration via injected dependencies (no package-level mutable globals); read-only package-level caches (default ignore paths, system prompt) are permitted for performance
 - Graceful shutdown: in-flight reviews are canceled to prevent stale upstream hangs
 - GitHub API calls use a client timeout throughout
+- Structured JSON logging via `log/slog` (`slog.NewJSONHandler(os.Stdout, nil)`) — all server logs are machine-readable JSON to stdout
+- `branch_pattern` must contain at least one capture group; `compileBranchPattern` enforces this at config parse time and returns an error if `re.NumSubexp() < 1`
+- `ignore_paths` uses a hand-rolled `**` glob engine (`globMatch`/`matchIgnorePattern` in `config/config.go`) — `filepath.Match` is not used because it does not support `**` for recursive directory matching
+- `limitDiffs` keeps the **first** 25 diffs (by path order from GitHub's compare response); `fetchPriorReviews` keeps the **most recent** 5 froggr comments — the ordering asymmetry is intentional
+- Issue comment output format (from `review/format.go`): header is `## froggr review: \`{branch}\` @ \`{7-char SHA}\``, findings formatted as `### {severity}: \`{file}:{line}\`\n{description}`, bugs before concerns; skipped/failed comments reuse the same header with the reason as body
