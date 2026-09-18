@@ -16,7 +16,7 @@ froggr/
 │   ├── debounce/        # Timer-based push debounce (30s window): buffer.go + buffer_test.go
 │   ├── ghub/            # GitHub App auth, webhook parsing, API client, types; per-installation AppAuth client caching; IsNotFound helper; SignatureError (401 vs 400)
 │   ├── openrouter/      # OpenRouter chat completion HTTP client
-│   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse (ErrInvalidAIResponse sentinel), format (FormatReviewComment, FormatFailedComment), errors (SuppressFailureComment, ShouldPostFailureComment)
+│   ├── review/          # AI review engine: engine, interfaces, types, context, prompt, parse (ErrInvalidAIResponse sentinel), format (FormatComment, FormatSkippedComment, FormatFailedComment), errors (SuppressFailureComment, ShouldPostFailureComment)
 │   ├── server/          # HTTP server, webhook routing, event handler
 │   └── testutil/        # Shared test helpers (webhook signing, error fixtures)
 ├── docs/
